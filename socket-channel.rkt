@@ -7,7 +7,11 @@
 (provide main
          (struct-out dcg)
          dcg-send
-         dcg-recv)
+         dcg-send-type
+         dcg-recv
+         dcg-kill
+         dchannel-put
+         dchannel-get)
 
 (define (write-flush msg [p current-output-port])
   (write msg p)
@@ -17,44 +21,67 @@
 ;distributed communication group
 (struct dcg (ch id n))
 ;distributed communication group message
-(struct dcgm (src dest msg) #:prefab)
+(struct dcgm (type src dest msg) #:prefab)
+
+(define DCGM-TYPE-NORMAL 0)
+(define DCGM-TYPE-DIE    1)
+(define DCGM-TYPE-NEW-DCHANNEL    2)
+
+
+(define dchannel-put place-channel-put)
+(define dchannel-get place-channel-get)
+
+(define (dcg-send-type c type dest msg)
+  (place-channel-put (dcg-ch c) (dcgm type (dcg-id c) dest msg)))
 
 (define (dcg-send c dest msg)
-  (place-channel-put (dcg-ch c) (dcgm (dcg-id c) dest msg)))
+  (dcg-send-type c DCGM-TYPE-NORMAL dest msg))
 
-(define (dcg-send-router-die c dest msg)
-  (dcg-send c dest msg))
+(define (dcg-kill c dest)
+  (place-channel-put (dcg-ch c) (dcgm DCMG-TYPE-DIE (dcg-id c) dest "DIE")))
+
+(define (dcg-send-new-dchannel c dest)
+  (define-values (e1 e2) (place-channel))
+  (dcg-send-type c DCGM-TYPE-NEW-DCHANNEL dest e2))
 
 (define (dcg-recv c)
   (place-channel-get (dcg-ch c)))
 
+(define-syntax-rule (reduce-sum seq item body ...)
+  (for/fold ([sum 0]) ([item seq]) (+ sum (begin body ...))))
 
-(define (total-node-count conf)
-  (for/fold ([sum 0]) ([l conf]) (+ sum (second l))))
+(define (total-node-count conf) (reduce-sum conf item (second item)))
 
 (define (start-node-router chan-vec)
-  (define (handle-mesg m)
+  (define (forward-mesg m src-channel)
     (match m
-      ;[(dcgm srcs "DIE" msg) (exit 1)]
-      [(dcgm srcs dest msg)
+      [(dcgm ,DCMG-TYPE-DIE "DIE" dest msg) (exit 1)]
+      [(dcgm ,DCMG-TYPE-NEW-DCHANNEL src dest msg)
+        (define d (vector-ref chan-vec dest))
+        (cond
+          [(socket-pair? d)
+            (write-flush m (socket-pair-out d))]
+          [(or (place-channel? d) (place? d))
+            (place-channel-put d msg)])]
+       
+      [(dcgm mtype srcs dest msg)
         (define d (vector-ref chan-vec dest))
         (cond
           [(socket-pair? d)
             (write-flush m (socket-pair-out d))]
           [(or (place-channel? d) (place? d))
             (place-channel-put d m)])]
-      [eof 
+      [(? eof-object?)
         (printf "connection died\n")
         (exit 1)]))
 
   (define (ch->evt x)
     (cond
       [(socket-pair? x)
-       (handle-evt (socket-pair-in x) (lambda (e)
-         (handle-mesg (read (socket-pair-in x)))))]
+       (define in (socket-pair-in x))
+       (handle-evt in (lambda (e) (forward-mesg (read in) x)))]
       [(or (place-channel? x) (place? x))
-       (handle-evt x (lambda (e)
-         (handle-mesg e)))]))
+       (handle-evt x (lambda (e) (forward-mesg e x)))]))
 
   (define evt-lst
     (for/list ([x (in-vector chan-vec)])
@@ -64,53 +91,67 @@
     (apply sync evt-lst)
     (loop)))
 
-(define (startup [port 6342] [conf #f] [node-name #f] [node-id #f] [modpath #f] [funcname #f])
+(define (startup [port 6342] [conf #f])
   (start-node-router 
     (cond 
       ;master
       [conf
         (define t-n-c (total-node-count conf))
         (define cv (make-vector t-n-c null))
-        (build-net port cv 0 (caar conf) (cadar conf) conf modpath funcname)
+        (build-down port cv conf 0)
         cv]
       ;slave
       [else
         (listen/init-channels port)])))
 
-
-(define (build-net port cv node-id node-name node-cnt conf modpath funcname)
+;; Contract: build-down : port channel-vector conf conf-idx -> (void)
+;;
+;; Purpose: build up channel-vector by connecting to nodes greater than my-id
+;;
+;; Example: (build-down 6432 channel-vector conf 0)
+;;
+(define (build-down port cv conf conf-idx)
   (define t-n-c (total-node-count conf))
-  (define (isself? host-info) (equal? (first host-info) node-name))
+  (match-define (list* node-name node-cnt _ _ modpath funcname rst) (list-ref conf conf-idx))
+  (define (isself? rname) (equal? rname node-name))
 
-  (let loop ([conf-rest conf]
-             [idx 0]
-             [seen-self #f]
-             [next-node-id 0]
-             [rl null])
-    (match conf-rest
-      [(list) (reverse rl)]
-      [(cons (and h (list* rname rcnt rport rst)) t)
-        (define (remote-spawn)
-          (define-values (in out) (tcp-connect rname rport))
-          (write-flush (list node-id node-name node-cnt idx next-node-id rname rcnt conf modpath funcname) out)
-;          (printf "Sending ~a\n" (list node-id node-name node-cnt idx next-node-id rname rcnt conf modpath funcname))
-          (define sp (socket-pair in out))
-          (for ([i (in-range rcnt)])
-            (vector-set! cv (+ next-node-id i) sp)))
-        (define (local-spawn)
-          (set! seen-self #t)
-          (for ([i (in-range rcnt)])
-            (define sp (dynamic-place modpath funcname))
-            (vector-set! cv (+ next-node-id i) sp)
-            (place-channel-put sp (list (+ next-node-id i) t-n-c))))
+  (for/fold ([my-id #f]
+             [next-node-id 0])
+            ([item conf]
+             [conf-idx (in-naturals)])
+    (match-define (and h (list* rname rcnt rport rst)) item)
 
-       (define node-result 
-         (cond 
-           [seen-self       (remote-spawn)]
-           [(isself? h)     (local-spawn)]
-           [(not seen-self) null]))
+    (define (loopit my-id)
+      (values my-id (+ next-node-id rcnt)))
+    (define (remote-spawn)
+      (define-values (in out) (tcp-connect rname rport))
+      (define msg (list my-id node-name node-cnt conf-idx next-node-id rname rcnt conf))
+      (printf "Sending ~a\n" msg)
+      (write-flush msg  out)
+      (define sp (socket-pair in out))
+      (for ([i (in-range rcnt)])
+        (vector-set! cv (+ next-node-id i) sp))
+      (loopit my-id))
+    (define (local-spawn)
+      (for ([i (in-range rcnt)])
+        (define sp (dynamic-place modpath funcname))
+        (vector-set! cv (+ next-node-id i) sp)
+        (place-channel-put sp (list (+ next-node-id i) t-n-c)))
+      (loopit next-node-id))
+
+   (cond 
+     [my-id  (remote-spawn)]
+     [(isself? rname) (local-spawn)]
+     [(not my-id) (loopit my-id)])))
        
-       (loop t (add1 idx) seen-self (+ next-node-id rcnt) (cons node-result rl))])))
+
+;; Contract: listen/init-channels : port -> VectorOf[ socket-pair]
+;;
+;; Purpose: build up channel-vector by listening for connect requests for nodes less than
+;; myid. Spawn thread to build channel-vector by connecting to nodes greater than myid.
+;;
+;; Example: (listen/init-channels 6432)
+;;
 ;; Node 1  Node 2  Node 3
 ;; 1 2     3 4     5 6
 ;;
@@ -122,27 +163,27 @@
              [cv #f])
     (define-values (in out) (tcp-accept listener))
     (define sp (socket-pair in out))
-    (match-define (list sid sname scnt myidx myid myname mycnt conf modpath funcname) (read in))
-;    (printf "Listen ~a\n" (list sid sname scnt myidx myid myname mycnt conf modpath funcname))
-    (when (not cv)
-      (set! cnt (- myidx 1))
-      (set! thr (thread (lambda () (build-net port cv myid myname mycnt conf modpath funcname))))
-      (set! cv (make-vector (total-node-count conf) null)))
+    (match-define (list sid sname scnt myidx myid myname mycnt conf) (read in))
+    (printf "Listen ~a\n" (list sid sname scnt myidx myid myname mycnt conf))
+    (let*
+      ([cnt (or cnt (- myidx 1))]
+       [cv  (or cv  (make-vector (total-node-count conf) null))]
+       [thr (or thr (thread (lambda () (build-down port cv conf myidx))))])
 
-    (for ([i (in-range scnt)])
-      (vector-set! cv (+ sid i) sp))
+      (for ([i (in-range scnt)])
+        (vector-set! cv (+ sid i) sp))
 
-    (if (= 0 cnt)
-      (begin (thread-wait thr) cv)
-      (loop (sub1 cnt) thr cv))))
+      (if (= 0 cnt)
+        (begin (thread-wait thr) cv)
+        (loop (sub1 cnt) thr cv)))))
 
 (define (main . args)
-  (define nl (list (list "nan"  2 6341 #t "echo.rkt" 'echo-node)
+  (define conf (list (list "nan"  2 6341 #t "echo.rkt" 'echo-node)
                    (list "nan2" 2 6342 #t "echo.rkt" 'echo-node)
                    (list "nan3" 2 6343 #t "echo.rkt" 'echo-node)))
 
   (match args
-    [(list "1") (startup 6341 nl tan 0 "echo.rkt" 'echo-node)]
+    [(list "1") (startup 6341 conf)]
     [(list "2") (startup 6342)]
     [(list "3") (startup 6343)]
     [(list "p" p) (startup (string->number p))]))
