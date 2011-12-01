@@ -1,11 +1,14 @@
 #lang racket/base
 (require racket/place
          racket/match
+         racket/runtime-path
          (except-in "racloud.rkt" main))
 
 (provide echo-node
          main
          config)
+
+(define-runtime-path hello-path "hello.rkt")
 
 (define (echo-node ch)
   (define c (apply dcg ch (place-channel-get ch)))
@@ -22,9 +25,10 @@
             [ch new-channels])
         (dchannel-put ch (format "Hello on new chanel ~a" i)))
       (sleep 1)
-      (define hch (dcg-spawn-remote-process c "nan4" #:port 6434 "hello.rkt" 'hello))
+      (define hch (dcg-spawn-remote-dplace c "nan4" #:port 6434 (path->string hello-path) 'hello))
       (place-channel-put hch "Hello new node!")
-      ;(for ([i (in-range 1 (dcg-n c))]) (dcg-kill c i))
+      (sleep 5)
+      (for ([i (in-range 1 (dcg-n c))]) (dcg-kill c i))
       ]
 
     [else
@@ -33,16 +37,16 @@
       (define dch (dcg-recv c))
       (printf "dch ~a\n" dch)
       (displayln (dchannel-get dch))]))
-
+(define ssh-path (ssh-bin-path))
 (define racketpath (path->string (racket-path)))
 (define racloudpath (racloud-path))
 (define echopath (get-current-module-path))
 (define config 
   (list
-    (ext-config "nan"  "6431" 2 racketpath racloudpath echopath 'echo-node 'config)
-    (ext-config "nan2" "6432" 2 racketpath racloudpath echopath 'echo-node 'config)
-    (ext-config "nan3" "6433" 2 racketpath racloudpath echopath 'echo-node 'config)))
+    (node-config "nan"  "6431" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)
+    (node-config "nan2" "6432" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)
+    (node-config "nan3" "6433" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)))
 
 (define (main)
-  (spawn-config config))
+  (launch-config config))
 

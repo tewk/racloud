@@ -7,24 +7,32 @@
          racket/trait)
 
 (provide main
-         (struct-out ext-config)
+         (struct-out node-config)
          (struct-out dcg)
+         ssh-bin-path
          racket-path
          racloud-path
          get-current-module-path
 
+         dcg-get-cg
          dcg-send
          dcg-send-type
          dcg-recv
          dcg-kill
          dcg-send-new-dchannel
-         dcg-spawn-remote-process
+         dcg-spawn-remote-dplace
 
          dchannel-put
          dchannel-get
 
-         spawn-config
+         launch-config
+
+         master-event-loop
+         supervise-place-at
+         supervise-process-at
          )
+
+(define DEFAULT-ROUTER-PORT 6342)
 
 (define (->path x)
   (cond [(path? x) x]
@@ -36,8 +44,11 @@
 
 (define (->string x)
   (cond [(string? x) x]
+        [(number? x) (number->string x)]
         [(symbol? x) (symbol->string x)]
-        [(number? x) (number->string x)]))
+        [(path? x) (path->string x)]
+        ))
+
 
 (define (->length x)
   (cond [(string? x) (string-length x)]
@@ -54,7 +65,9 @@
 (define (racloud-path)
   (path->string (resolved-module-path-name (variable-reference->resolved-module-path (#%variable-reference)))))
 
-(define (write-flush msg [p current-output-port])
+(define (ssh-bin-path) "/usr/bin/ssh")
+
+(define (write-flush msg [p (current-output-port)])
   (write msg p)
   (flush-output p))
 
@@ -69,21 +82,37 @@
                         [else (raise e)]))])
       (tcp-connect rname (->number rport)))))
 
+(define (tcp-connect/retry rname rport #:times [times 10] #:delay [delay 1])
+  (let loop ([t 0])
+    (with-handlers ([exn? (lambda (e) 
+                  (cond [(t . < . times) 
+                         (printf "waiting ~a sec to retry connection to ~a:~a\n" delay rname rport)
+                         (sleep delay) 
+                         (loop (add1 t))]
+                        [else (raise e)]))])
+      (tcp-connect rname (->number rport)))))
+
 ;node configuration
-(struct ext-config (node-name node-port proc-count racket-path racloud-path mod-path func-name conf-name) #:prefab)
+(struct node-config (node-name node-port proc-count ssh-path racket-path racloud-path mod-path func-name conf-path conf-name) #:prefab)
 ;socket channel
 (struct socket-channel (in out [subchannels #:mutable]))
+(define (socket-channel-add-subchannel s ch-id ch)
+  (set-socket-channel-subchannels! s (append (socket-channel-subchannels s) (list (cons ch-id ch)))))
+(define (socket-channel-lookup-subchannel s ch-id)
+  (cdr (assoc ch-id (socket-channel-subchannels s))))
 ;distributed communication group
 (struct dcg (ch id n))
 ;distributed communication group message
 (struct dcgm (type src dest msg) #:prefab)
 
-(define DCGM-TYPE-NORMAL             0)
-(define DCGM-TYPE-DIE                1)
-(define DCGM-TYPE-NEW-DCHANNEL       2)
-(define DCGM-TYPE-NEW-INTER-DCHANNEL 3)
-(define DCGM-TYPE-INTER-DCHANNEL     4)
+(define DCGM-TYPE-NORMAL               0)
+(define DCGM-TYPE-DIE                  1)
+(define DCGM-TYPE-NEW-DCHANNEL         2)
+(define DCGM-TYPE-NEW-INTER-DCHANNEL   3)
+(define DCGM-TYPE-INTER-DCHANNEL       4)
+(define DCGM-TYPE-KILL-DPLACE          5)
 (define DCGM-TYPE-SPAWN-REMOTE-PROCESS 6)
+(define DCGM-DPLACE-DIED               7)
 
 
 (define dchannel-put place-channel-put)
@@ -94,6 +123,8 @@
 
 (define (dcg-send c dest msg)
   (dcg-send-type c DCGM-TYPE-NORMAL dest msg))
+
+(define (dcg-get-cg ch) (apply dcg ch (place-channel-get ch)))
 
 (define (dcg-kill c dest)
   (place-channel-put (dcg-ch c) (dcgm DCGM-TYPE-DIE (dcg-id c) dest "DIE")))
@@ -106,7 +137,7 @@
 ;; Contract: start-node-router : VectorOf[ (or/c place-channel socket-channel)] -> (void)
 ;; Purpose: Forward messages between channels and build new point-to-point subchannels
 ;; Example:
-(define (dcg-spawn-remote-process c hostname modpath funcname #:port [port 6432])
+(define (dcg-spawn-remote-dplace c hostname modpath funcname #:port [port 6432])
   (define-values (e1 e2) (place-channel))
   (dcg-send-type c DCGM-TYPE-SPAWN-REMOTE-PROCESS (list hostname port modpath funcname) e2)
   e1)
@@ -117,7 +148,7 @@
 (define-syntax-rule (reduce-sum seq item body ...)
   (for/fold ([sum 0]) ([item seq]) (+ sum (begin body ...))))
 
-(define (total-node-count conf) (reduce-sum conf item (ext-config-proc-count item)))
+(define (total-node-count conf) (reduce-sum conf item (node-config-proc-count item)))
 
 ;; Contract: start-node-router : VectorOf[ (or/c place-channel socket-channel)] -> (void)
 ;;
@@ -159,6 +190,15 @@
     register
   ))
 
+(define-syntax-rule (for/filter/fold/cons tail xs body ...)
+  (for/fold ([n tail]) xs
+    (define r (let () body ...))
+    (if r (cons r n) n)))
+
+(define (filter/list* . lst)
+  (define rl (reverse lst))
+  (for/filter/fold/cons (car rl) ([x (cdr rl)]) x))
+
 (define spawned-process%
   (backlink
     (class* 
@@ -170,39 +210,39 @@
              [e #f]
              [pid #f])
 
-      #;(match (call-with-values (lambda () (apply subprocess #f #f #f cmdline-list)) list)
-        [(list _s _o _i _e)
-         (set! pid (subprocess-pid _s)) 
-         (set! s _s)
-         (set! o _o)
-         (set! i _i)
-         (set! e _e)])
+      (printf "SPAWNING-PROCESS: ~a\n" cmdline-list)
+
+      (let-values ([(_s _o _i _e) (apply subprocess #f #f #f cmdline-list)])
+        (set! pid (subprocess-pid _s)) 
+        (set! s _s)
+        (set! o _o)
+        (set! i _i)
+        (set! e _e))
 
       (define (mk-handler port desc)
         (if port
           (handle-evt port (lambda (e) 
-            (define bb (make-bytes 4096))
-            (define bbl (read-bytes-avail!* bb port))                                                        
-            (define (print-out x)                                                                         
-                    (printf "~a:~a:~a ~a\n" pid desc (->length x) x)) 
+            (define (print-out x) (printf "SPAWNED-PROCESS ~a:~a:~a ~a\n" pid desc (->length x) x)
+              (flush-output)) 
             (cond 
-              [(eof-object? bbl) 
-               (print-out "EOF")                                                                      
-               (set! port #f)]
-              [else                                                                                   
-               (print-out (subbytes bb 0 bbl))])))
+              [(not port) (print-out "IS #F")]
+              [else
+                (define bb (make-bytes 4096))
+                (define bbl (read-bytes-avail!* bb port))                                                        
+                (cond 
+                  [(eof-object? bbl) 
+                   (print-out "EOF")                                                                      
+                   (set! port #f)]
+                  [else                                                                                   
+                   (print-out (subbytes bb 0 bbl))])])))
           #f))
 
       (define/public (register nes)
-        (for/fold ([n nes]) ([x (list s (list o "OUT") (list e "ERR"))])
-          (define v
-             (cond 
-               [(subprocess? x) (handle-evt s (lambda (e) (send this remove-from-router)))]
-               [(list? x) (apply mk-handler x)]
-               [else #f]))
-          (if v
-              (cons v n)
-              n)))
+        (for/filter/fold/cons nes ([x (list s (list o "OUT") (list e "ERR"))])
+          (cond 
+            [(subprocess? x) (handle-evt s (lambda (e) (send this remove-from-router)))]
+            [(list? x) (apply mk-handler x)]
+            [else #f])))
       (super-new)
   )))
 
@@ -227,56 +267,67 @@
       (init-field [chan-vec #f])
       (init-field [listen-port #f])
       (init-field [socket-ports null])
+      (init-field [sub-ecs null])
       (define (add-socket-port pair)
         (set! socket-ports (append socket-ports (list pair)))
         (send this recompute-sync-list))
-      (define (socket-channel-add-subchannel s pair)
-        (set-socket-channel-subchannels! s (append (socket-channel-subchannels s) (list pair))))
+      (define (add-sub-ec ec)
+        (set! sub-ecs (append sub-ecs (list ec)))
+        (send this recompute-sync-list))
       (define (add-place-channel-socket-bridge pch sch id)
         (send this add-to-router (new place-socket-bridge% [pch pch] [sch sch] [id id])))
+(define DCGM-TYPE-NORMAL               0)
+(define DCGM-TYPE-DIE                  1)
+(define DCGM-TYPE-NEW-DCHANNEL         2)
+(define DCGM-TYPE-NEW-INTER-DCHANNEL   3)
+(define DCGM-TYPE-INTER-DCHANNEL       4)
+(define DCGM-TYPE-KILL-DPLACE          5)
+(define DCGM-TYPE-SPAWN-REMOTE-PROCESS 6)
+(define DCGM-DPLACE-DIED               7)
       (define (forward-mesg m src-channel)
         (match m
-          [(dcgm (== DCGM-TYPE-DIE) "DIE" dest msg) (exit 1)]
-          [(dcgm (== DCGM-TYPE-NEW-DCHANNEL) src dest pch)
+          [(dcgm 1 #;(== DCGM-TYPE-DIE) src dest "DIE") (exit 1)]
+          [(dcgm 2 #;(== DCGM-TYPE-NEW-DCHANNEL) src dest pch)
             (define d (vector-ref chan-vec dest))
             (cond
               [(socket-channel? d)
                (define ch-id (send this get-next-id))
-               (socket-channel-add-subchannel d (cons ch-id pch))
+               (socket-channel-add-subchannel d ch-id pch)
                (add-place-channel-socket-bridge pch d ch-id)
                (write-flush (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL src dest ch-id)
                             (socket-channel-out d))]
               [(or (place-channel? d) (place? d))
                 (place-channel-put d m)])]
-          [(dcgm (== DCGM-TYPE-NEW-INTER-DCHANNEL) src dest ch-id)
+          [(dcgm 3 #;(== DCGM-TYPE-NEW-INTER-DCHANNEL) -1 (list place-path place-func) ch-id)
+           (add-sub-ec (new supervised-place%
+                            [place-path place-path]
+                            [place-func place-func]
+                            [ch-id ch-id]
+                            [sc src-channel]))]
+          [(dcgm 3 #;(== DCGM-TYPE-NEW-INTER-DCHANNEL) src dest ch-id)
+            (printf "src ~a\n" src)
             (define s src-channel)
-            (cond
-             [(= src -1)
-              (match-define (list mod-path func-name) dest)
-              (define pch1 (dynamic-place (->path mod-path) func-name))
-              (socket-channel-add-subchannel s (cons ch-id pch1))
-              (add-place-channel-socket-bridge pch1 s ch-id)]
-             [else
-              (define d (vector-ref chan-vec dest))
-              (define-values (pch1 pch2) (place-channel))
-              (socket-channel-add-subchannel s (cons ch-id pch1))
-              (add-place-channel-socket-bridge pch1 s ch-id)
-              (place-channel-put d (dcgm DCGM-TYPE-NEW-DCHANNEL src dest pch2))])]
-          [(dcgm (== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)
-           (define pch (cdr (assoc ch-id (socket-channel-subchannels src-channel))))
+            (define d (vector-ref chan-vec dest))
+            (define-values (pch1 pch2) (place-channel))
+            (socket-channel-add-subchannel s ch-id pch1)
+            (add-place-channel-socket-bridge pch1 s ch-id)
+            (place-channel-put d (dcgm DCGM-TYPE-NEW-DCHANNEL src dest pch2))]
+          [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)
+           (define pch (socket-channel-lookup-subchannel src-channel ch-id))
            (place-channel-put pch msg)]
-          [(dcgm (== DCGM-TYPE-SPAWN-REMOTE-PROCESS) src (list node-name node-port mod-path funcname) ch1)
+          [(dcgm 6 #;(== DCGM-TYPE-SPAWN-REMOTE-PROCESS) src (list node-name node-port mod-path funcname) ch1)
            (send this add-to-router (new spawned-process% [cmdline-list
-              (list "/usr/bin/ssh" node-name (racket-path) "-tm" (racloud-path) "spawn" 
-                  node-name (->string node-port) mod-path (->string funcname))]))
+              (list "/usr/bin/ssh" node-name (racket-path) "-tm" (racloud-path) "spawn" (->string node-port))]))
            (define-values (in out) (tcp-connect/backoff node-name node-port))
            (define sp (socket-channel in out null))
            (define ch-id (send this get-next-id))
-           (socket-channel-add-subchannel sp (cons ch-id ch1))
+           (socket-channel-add-subchannel sp ch-id ch1)
            (add-place-channel-socket-bridge ch1 sp ch-id)
            (add-socket-port sp)
            (write-flush (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 (list mod-path funcname) ch-id)
                             (socket-channel-out sp))]
+          [(dcgm 7 #;(== DCGM-DPLACE-DIED) -1 -1 ch-id)
+            (printf "PLACE ~a died\n" ch-id)]
           [(dcgm mtype srcs dest msg)
             (define d (vector-ref chan-vec dest))
             (cond
@@ -286,29 +337,51 @@
                 (place-channel-put d m)])]
           [(? eof-object?)
             (printf "connection died\n")
-            (exit 1)]))
+            (flush-output)
+            (exit 1)
+            ]))
 
       (define/public (register nes)
-        (define n 
-          (if chan-vec
-            (for/fold ([n nes]) ([x (in-vector chan-vec)])
+        (let*
+          ([nes
+            (if chan-vec
+              (for/fold ([n nes]) ([x (in-vector chan-vec)])
+                (cons
+                  (cond
+                    [(socket-channel? x)
+                     (define in (socket-channel-in x))
+                     (handle-evt in (lambda (e) (forward-mesg (read in) x)))]
+                    [(or (place-channel? x) (place? x))
+                     (handle-evt x (lambda (e) (forward-mesg e x)))])
+                  n))
+              nes)]
+           [nes 
+            (if listen-port
               (cons
-                (cond
-                  [(socket-channel? x)
-                   (define in (socket-channel-in x))
-                   (handle-evt in (lambda (e) (forward-mesg (read in) x)))]
-                  [(or (place-channel? x) (place? x))
-                   (handle-evt x (lambda (e) (forward-mesg e x)))])
-                n))
-            nes))
-        (if listen-port
-          (cons
-            (handle-evt listen-port (lambda (e)
-              (define-values (in out) (tcp-accept listen-port))
-              (define sp (socket-channel in out null))
-              (add-socket-port sp)))
-            n)
-          n))
+                (handle-evt listen-port (lambda (e)
+                  (define-values (in out) (tcp-accept listen-port))
+                  (define sp (socket-channel in out null))
+                  (add-socket-port sp)))
+                nes)
+              nes)]
+           [nes
+            (if socket-ports
+              (for/fold ([n nes]) ([x socket-ports])
+                (cons
+                  (cond
+                    [(socket-channel? x)
+                     (define in (socket-channel-in x))
+                     (handle-evt in (lambda (e) (forward-mesg (read in) x)))]
+                    [(or (place-channel? x) (place? x))
+                     (handle-evt x (lambda (e) (forward-mesg e x)))])
+                  n))
+              nes)]
+           [nes
+            (if sub-ecs
+              (for/fold ([n nes]) ([x sub-ecs])
+                (send x register n))
+              nes)])
+          nes))
 
 
       (super-new)
@@ -327,6 +400,94 @@
           nes))
       (super-new)
   )))
+
+(define remote-place-supervisor%
+  (backlink
+    (class* 
+      object% (event-container<%>)
+      (init-field host-name)
+      (init-field host-port)
+      (init-field cmdline-list)
+      (init-field place-path)
+      (init-field place-func)
+      (field [sp #f])
+      (field [sc #f])
+      (field [psb #f])
+      (field [pc #f])
+      (field [running #f])
+
+      (define ch-id 1)
+      (set! sp (new spawned-process% [cmdline-list cmdline-list]))
+      (define-values (in out) (tcp-connect/retry host-name host-port))
+      (set! sc (socket-channel in out null))
+
+
+      (define/public (start)
+        (write-flush (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 (list (->string place-path) place-func) ch-id) (socket-channel-out sc))
+        (define-values (pch1 pch2) (place-channel))
+        (socket-channel-add-subchannel sc ch-id pch1)
+        (set! psb (new place-socket-bridge% [pch pch1] [sch sc] [id ch-id]))
+        (set! pc pch2))
+
+      (start)
+      (define/public (stop)
+        (void))
+      (define (on-channel-event e)
+        (printf "~a:~a ~a\n" host-name host-port e))
+      (define (on-socket-event e)
+        (define it (read e))
+        (match it
+          [(dcgm 7 #;(== DCGM-DPLACE-DIED) -1 -1 ch-id)
+            (printf "PLACE ~a:~a:~a died\n" host-name host-port ch-id)]
+          [else (printf "recveived message ~a\n" it)]))
+      (define/public (register es)
+        (let* ([es (if pc (cons (handle-evt pc on-channel-event) es) es)]
+               [es (if sp (send sp register es) es)]
+               [es (if sc (cons (handle-evt (socket-channel-in sc) on-socket-event) es) es)])
+          es))
+
+      (super-new)
+      )))
+
+
+(define supervised-place%
+  (backlink
+    (class* 
+      object% (event-container<%>)
+      (init-field place-path)
+      (init-field place-func)
+      (init-field ch-id)
+      (init-field sc)
+      (field [pd #f])
+      (field [psb #f])
+      (field [running #f])
+      (define (default-on-place-dead e)
+        (set! pd #f)
+        (printf "PLACE DIED ~a\n" e)
+        (flush-output)
+        (write-flush (dcgm DCGM-DPLACE-DIED -1 -1 ch-id) (socket-channel-out sc)))
+
+      (init-field [on-place-dead default-on-place-dead])
+
+      (set! pd (dynamic-place (->path place-path) place-func))
+      (socket-channel-add-subchannel sc ch-id pd)
+      (set! psb (new place-socket-bridge% [pch pd] [sch sc] [id ch-id]))
+
+      (define/public (stop)
+        (cond
+          [pd 
+            (place-kill pd)
+            (set! pd #f)]
+          [else (void)])) ;send place not running message
+
+      (define/public (register es)
+        (let* ([es (if pd (cons (handle-evt (place-dead-evt pd) on-place-dead) es) es)]
+               [es (if psb (send psb register es) es)])
+          es))
+      (super-new)
+      )))
+
+
 
 (define event-router%
   (class* object% ()
@@ -351,20 +512,28 @@
 
     (define/public (build-es-list)
       (set! es 
-        (for/fold ([nes null]) ([ec ecs])
-          (send ec register nes))))
+        ;(list*
+          #;(handle-evt (current-output-port)
+            (lambda (e)
+              (flush-output)))
+          #;(handle-evt (current-error-port)
+            (lambda (e)
+              (flush-output (current-error-port))))
+          (for/fold ([nes null]) ([ec ecs])
+            (send ec register nes)))
+       es) ;)
 
     (define/public (sync-events)
       (let loop ()
         (when build-list (build-es-list)
           (set! build-list #f))
-        (apply sync es)
+        (apply sync (build-es-list))
         (unless quit
           (loop))))
     (super-new)
   ))
 
-(define (startup [port 6342] [conf #f])
+(define (startup [port DEFAULT-ROUTER-PORT] [conf #f])
   (start-node-router 
     (cond 
       ;master
@@ -385,14 +554,14 @@
 ;;
 (define (build-down port cv conf conf-idx)
   (define t-n-c (total-node-count conf))
-  (match-define (ext-config node-name _ node-cnt _ _ modpath funcname confname) (list-ref conf conf-idx))
+  (match-define (node-config node-name _ node-cnt _ _ _ modpath funcname config-path confname) (list-ref conf conf-idx))
   (define (isself? rname) (equal? rname node-name))
 
   (for/fold ([my-id #f]
              [next-node-id 0])
             ([item conf]
              [conf-idx (in-naturals)])
-    (match-define (ext-config rname rport rcnt _ _ modpath funcname confname) item)
+    (match-define (node-config rname rport rcnt _ _ _ modpath funcname conf-path confname) item)
 
     (define (loopit my-id)
       (values my-id (+ next-node-id rcnt)))
@@ -450,12 +619,39 @@
         (begin (thread-wait thr) cv)
         (loop (sub1 cnt) thr cv)))))
 
-;; Contract: ext-config -> (void)
+(define (supervise-process-at host #:port [port DEFAULT-ROUTER-PORT]
+                            #:restart-on-exit [restart-on-exit #f]
+                            . command-line-list)
+  (void)
+  )
+
+(define (supervise-place-at host place-path place-func #:port [port DEFAULT-ROUTER-PORT]
+                            #:initial-message [initial-message #f]
+                            #:racket-path [racketpath (racket-path)]
+                            #:ssh-bin-path [sshpath (ssh-bin-path)]
+                            #:racloud-path [racloudpath (racloud-path)]
+                            #:restart-on-exit [restart-on-exit #f])
+  (new remote-place-supervisor%
+       [host-name host]
+       [host-port port]
+       [cmdline-list (list sshpath host racketpath "-tm" racloudpath "spawn" (->string port))]
+       [place-path place-path]
+       [place-func place-func]))
+
+(define (master-event-loop . event-containers)
+  (define er (new event-router%))
+  (for ([ec event-containers])
+    (send er add-ec ec))
+  (send er sync-events)) 
+
+
+
+;; Contract: node-config -> (void)
 ;;
 ;; Purpose: use ssh to launch remote nodes of racloud
 ;;
 ;; Example:
-(define (spawn-config config)
+(define (launch-config config)
   ;FIXME kill safety
   (define nodes
     (for/list ([c config]
@@ -463,7 +659,7 @@
       (list
         (call-with-values 
           (lambda ()
-            (match-define (ext-config node-name node-port _ racket-path racloud-path mod-path func-name conf-name) c)
+            (match-define (node-config node-name node-port _ ssh-path racket-path racloud-path mod-path func-name config-path conf-name) c)
             (subprocess #f #f #f "/usr/bin/ssh" node-name   racket-path "-tm" 
                         racloud-path
                         "launch" 
@@ -485,11 +681,11 @@
               (lambda (x)
                 (define bbl (read-bytes-avail!* bb x))
                 (define (print-out x)
-                  (printf "~a:~a:~a ~a\n" (ext-config-node-name config) (ext-config-node-port config) bbl x))
+                  (printf "~a:~a:~a ~a\n" (node-config-node-name config) (node-config-node-port config) bbl x)
+                  (flush-output))
                 (cond [(eof-object? bbl)
                        (print-out "EOF")
-                       (set! handlers (remove self handlers))
-                       (printf "HANDLERS ~a\n" handlers)]
+                       (set! handlers (remove self handlers))]
                       [else 
                        (print-out (subbytes bb 0 bbl))]))))
           self))
@@ -509,15 +705,14 @@
       (set! normal-finish #t))
     (lambda ()
       (unless normal-finish
-        (printf "HERE ~a\n" normal-finish)
         (for ([n nodes])
           (subprocess-kill (first (first n)) #f))))))
 
 (define (main . args)
   (match args
-    [(list "spawn"  node-name node-port mod-path func-name)
+    [(list "spawn" node-port)
        (define listener (tcp-listen (->number node-port) 4 #t))
-       (write (list (->number node-port)))
+       (write-flush (list (->number node-port)))
        (start-spawned-node-router listener)]
 
     [(list "launch" node-name node-port mod-path conf-name i)
