@@ -305,7 +305,6 @@
                             [ch-id ch-id]
                             [sc src-channel]))]
           [(dcgm 3 #;(== DCGM-TYPE-NEW-INTER-DCHANNEL) src dest ch-id)
-            (printf "src ~a\n" src)
             (define s src-channel)
             (define d (vector-ref chan-vec dest))
             (define-values (pch1 pch2) (place-channel))
@@ -317,7 +316,7 @@
            (place-channel-put pch msg)]
           [(dcgm 6 #;(== DCGM-TYPE-SPAWN-REMOTE-PROCESS) src (list node-name node-port mod-path funcname) ch1)
            (send this add-to-router (new spawned-process% [cmdline-list
-              (list "/usr/bin/ssh" node-name (racket-path) "-tm" (racloud-path) "spawn" (->string node-port))]))
+              (list (ssh-bin-path)  node-name (racket-path) "-tm" (racloud-path) "spawn" (->string node-port))]))
            (define-values (in out) (tcp-connect/backoff node-name node-port))
            (define sp (socket-channel in out null))
            (define ch-id (send this get-next-id))
@@ -533,18 +532,18 @@
     (super-new)
   ))
 
-(define (startup [port DEFAULT-ROUTER-PORT] [conf #f])
+(define (startup conf conf-idx)
   (start-node-router 
     (cond 
       ;master
-      [conf
+      [(= 0 conf-idx)
         (define t-n-c (total-node-count conf))
         (define cv (make-vector t-n-c null))
-        (build-down port cv conf 0)
+        (build-down (node-config-node-port (first conf)) cv conf 0)
         cv]
       ;slave
       [else
-        (listen/init-channels port)])))
+        (listen/init-channels (node-config-node-port (list-ref conf conf-idx)))])))
 
 ;; Contract: build-down : port channel-vector conf conf-idx -> (void)
 ;;
@@ -555,19 +554,19 @@
 (define (build-down port cv conf conf-idx)
   (define t-n-c (total-node-count conf))
   (match-define (node-config node-name _ node-cnt _ _ _ modpath funcname config-path confname) (list-ref conf conf-idx))
-  (define (isself? rname) (equal? rname node-name))
+  (define (isself? rid) (equal? rid conf-idx))
 
   (for/fold ([my-id #f]
              [next-node-id 0])
             ([item conf]
-             [conf-idx (in-naturals)])
+             [curr-conf-idx (in-naturals)])
     (match-define (node-config rname rport rcnt _ _ _ modpath funcname conf-path confname) item)
 
     (define (loopit my-id)
       (values my-id (+ next-node-id rcnt)))
     (define (remote-spawn)
       (define-values (in out) (tcp-connect/backoff rname rport))
-      (define msg (list my-id node-name node-cnt conf-idx next-node-id rname rcnt conf))
+      (define msg (list my-id node-name node-cnt curr-conf-idx next-node-id rname rcnt conf))
       ;(printf "Sending ~v\n" msg)
       (write-flush msg out)
       (define sp (socket-channel in out null))
@@ -583,7 +582,7 @@
 
    (cond 
      [my-id  (remote-spawn)]
-     [(isself? rname) (local-spawn)]
+     [(isself? curr-conf-idx) (local-spawn)]
      [(not my-id) (loopit my-id)])))
        
 
@@ -660,12 +659,10 @@
         (call-with-values 
           (lambda ()
             (match-define (node-config node-name node-port _ ssh-path racket-path racloud-path mod-path func-name config-path conf-name) c)
-            (subprocess #f #f #f "/usr/bin/ssh" node-name   racket-path "-tm" 
+            (subprocess #f #f #f (ssh-bin-path) node-name racket-path "-tm" 
                         racloud-path
                         "launch" 
-                        node-name
-                        node-port
-                        mod-path
+                        config-path
                         (symbol->string conf-name)
                         (number->string i)))
           list)
@@ -715,7 +712,5 @@
        (write-flush (list (->number node-port)))
        (start-spawned-node-router listener)]
 
-    [(list "launch" node-name node-port mod-path conf-name i)
-     (if (zero? (string->number i))
-         (startup node-port (dynamic-require (->path mod-path) (string->symbol conf-name)))
-         (startup node-port))]))
+    [(list "launch" mod-path conf-name i)
+       (startup (dynamic-require (->path mod-path) (string->symbol conf-name)) (->number i))]))

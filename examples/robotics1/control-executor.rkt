@@ -59,8 +59,8 @@
 (define controlpath (get-current-module-path))
 (define config 
   (list
-    (node-config "nan" "6431" 1 ssh-path racketpath racloudpath controlpath 'control-node controlpath 'config)
-    (node-config "nan2" "6432" 1 ssh-path racketpath racloudpath controlpath 'executor-node controlpath 'config)))
+    (node-config "localhost" "6431" 1 ssh-path racketpath racloudpath controlpath 'control-node controlpath 'config)
+    (node-config "localhost" "6432" 1 ssh-path racketpath racloudpath controlpath 'executor-node controlpath 'config)))
 
 (define (main)
   (pretty-print config)

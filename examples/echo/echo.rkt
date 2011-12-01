@@ -27,8 +27,12 @@
       (sleep 1)
       (define hch (dcg-spawn-remote-dplace c "nan4" #:port 6434 (path->string hello-path) 'hello))
       (place-channel-put hch "Hello new node!")
-      (sleep 5)
-      (for ([i (in-range 1 (dcg-n c))]) (dcg-kill c i))
+      (sleep 1)
+      (sleep 1)
+      (sleep 1)
+      (sleep 1)
+      (sleep 1)
+      ;(for ([i (in-range 1 (dcg-n c))]) (dcg-kill c i))
       ]
 
     [else
@@ -43,9 +47,9 @@
 (define echopath (get-current-module-path))
 (define config 
   (list
-    (node-config "nan"  "6431" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)
-    (node-config "nan2" "6432" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)
-    (node-config "nan3" "6433" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)))
+    (node-config "localhost" "6431" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)
+    (node-config "localhost" "6432" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)
+    (node-config "localhost" "6433" 2 ssh-path racketpath racloudpath echopath 'echo-node echopath 'config)))
 
 (define (main)
   (launch-config config))
