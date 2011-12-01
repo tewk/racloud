@@ -2,7 +2,7 @@
 (require racket/place
          racket/match
          racket/runtime-path
-         (except-in "racloud.rkt" main))
+         (except-in "../../racloud.rkt" main))
 
 (provide echo-node
          main
@@ -11,7 +11,7 @@
 (define-runtime-path hello-path "hello.rkt")
 
 (define (echo-node ch)
-  (define c (apply dcg ch (place-channel-get ch)))
+  (define c (dcg-get-cg ch))
   (match (dcg-id c)
     [0
       (for ([i (in-range 1 (dcg-n c))]) (dcg-send c i (format "Hello ~a" i)))

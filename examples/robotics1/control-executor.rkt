@@ -2,6 +2,7 @@
 (require racket/place
          racket/match
          racket/runtime-path
+         racket/pretty
          (except-in "../../racloud.rkt" main))
 
 (provide control-node
@@ -26,9 +27,12 @@
   (dchannel-put direct-ch4 "Hello on dchannel 4")
 
   (let loop ([a 0])
-    (dcg-send cg EXECUTOR-ID (format "Hello ~a" a))
-    (sleep 5)
-    (loop (add1 a))))
+    (cond
+      [(a . < . 6)
+        (dcg-send cg EXECUTOR-ID (format "Hello ~a" a))
+        (sleep 5)
+        (loop (add1 a))]
+      [else (void)])))
 
 (define (executor-node ch)
   (define cg (dcg-get-cg ch))
@@ -59,6 +63,6 @@
     (node-config "nan2" "6432" 1 ssh-path racketpath racloudpath controlpath 'executor-node controlpath 'config)))
 
 (define (main)
-  (displayln config)
+  (pretty-print config)
   (launch-config config))
 

@@ -1,7 +1,7 @@
 #lang racket/base
 (require racket/place
          racket/match
-         (except-in "racloud.rkt" main))
+         (except-in "../../racloud.rkt" main))
 
 (provide hello)
 
