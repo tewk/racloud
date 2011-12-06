@@ -36,6 +36,8 @@
          ;; low-level API
          spawn-remote-racket-vm
          remote-place 
+         ll-channel-get
+         ll-channel-put
          )
 
 (define DEFAULT-ROUTER-PORT 6342)
@@ -282,6 +284,15 @@
             (if (dchannel? pch) (dchannel-ch pch) pch) (lambda (e)
             (write-flush (dcgm DCGM-TYPE-INTER-DCHANNEL id id e) (socket-channel-out sch))))
           nes))
+      (define/public (get-msg)
+        (let loop ()
+          (define msg (read (socket-channel-in sch)))
+          (if (= (dcgm-type msg) DCGM-DPLACE-DIED)
+            (loop)
+          (dcgm-msg msg))))
+
+      (define/public (put-msg msg)
+        (write-flush (dcgm DCGM-TYPE-INTER-DCHANNEL id id msg) (socket-channel-out sch)))
       (super-new)
   )))
 
@@ -463,7 +474,8 @@
 
       (define/public (launch-place place-path place-func)
         (define rp (new remote-place% [vm this] [place-path place-path] [place-func place-func]))
-        (add-remote-place rp))
+        (add-remote-place rp)
+        rp)
 
       (define/public (register-dchannel-with-router place-path place-func dch)
         (define ch-id (nextid))
@@ -502,9 +514,11 @@
         (let* ([es (if pc (cons (handle-evt pc on-channel-event) es) es)])
           es))
 
+      (define/public (get-msg) (send psb get-msg))
+      (define/public (put-msg msg) (send psb put-msg msg))
+
       (super-new)
       )))
-
 
 (define supervised-place%
   (backlink
@@ -543,6 +557,8 @@
       (super-new)
       )))
 
+(define (ll-channel-put ch msg) (send ch put-msg msg))
+(define (ll-channel-get ch) (send ch get-msg))
 
 
 (define event-router%
