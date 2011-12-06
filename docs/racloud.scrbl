@@ -97,7 +97,7 @@ Waits for an one of many events to become ready.  Endless loop.
 @defproc[(supervise-place-at [hostname string?] 
                              [compute-instance-module-path module-path?]
                              [compute-instance-function-name symbol?]
-                             [#:port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
+                             [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
                              [#:initial-message initial-message any? #f]                                            
                              [#:racket-path racketpath string-path? (racket-path)]                                          
                              [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
@@ -109,7 +109,7 @@ connected to any @racket[dcg].
 
 @defproc[(supervise-process-at [hostname string?] 
                                [commandline-argument string?] ...+
-                               [#:port port non-negative-integer? DEFAULT-ROUTER-PORT]) remote-process-supervisor%?]{
+                               [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]) remote-process-supervisor%?]{
 Spawns a new singleton node with an attached external process. This new node is an orphan.  It is not
 connected to any @racket[dcg].
 }
