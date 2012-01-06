@@ -293,7 +293,7 @@
           (handle-evt 
             (if (dchannel? pch) (dchannel-ch pch) pch) 
             (lambda (e)
-              (printf "PSB MSG ~a\n" e)
+              (printf "PLACE CHANNEL TO SOCKET ~a\n" e)
               (put-msg e)))
           nes))
       (define/public (get-msg)
@@ -496,7 +496,11 @@
         (match it
           [(dcgm 7 #;(== DCGM-DPLACE-DIED) -1 -1 ch-id)
             (printf "PLACE ~a:~a:~a died\n" host-name listen-port ch-id)]
-          [else (printf "recveived message ~a\n" it)]))
+          [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)                                               
+            (define pch (socket-channel-lookup-subchannel sc ch-id))                                  
+            (printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
+            (place-channel-put pch msg)] 
+          [else (printf "received message ~a\n" it)]))
 
       (define/public (get-log-prefix) (format "PLACE ~a:~a" host-name listen-port))
 
@@ -539,27 +543,24 @@
       (set! psb (send vm spawn-remote-place place-exec pch1))
       (set! pc pch2)
 
-      (define/public (stop)
-        (void))
-      (define/public (get-channel)
-        pc)
+      (define/public (stop) (void))
+      (define/public (get-channel) pc)
       (define (on-channel-event e)
         (printf "~a ~a\n" (send vm get-log-prefix) e))
       (define/public (register es)
         (let* ([es (if pc (cons (handle-evt pc
                                             (if k
                                               (begin
-                                                (printf "WE HAVE A C ~a ~a\n" k es)
+                                                ;(printf "WE HAVE A C ~a ~a\n" k es)
                                                 (lambda (e)
                                                   (printf "THIS IS E ~a\n" e)
                                                   (begin0
                                                   (k e)
                                                   (set! k #f))))
-                                              on-channel-event)) es) es)])
+                                              on-channel-event)) es) es)]
+               [es (send psb register es)])
           es))
-      (define/public (set-continuation _k)
-                     (printf "K SET\n")
-        (set! k _k))
+      (define/public (set-continuation _k) (set! k _k))
 
       (define/public (get-msg) (send psb get-msg))
       (define/public (put-msg msg) (send psb put-msg msg))
@@ -689,11 +690,12 @@
 
     (define/public (sync-events)
       (let loop ([i 0])
-        (when build-list (build-es-list)
+        #;(when build-list (build-es-list)
           (set! build-list #f))
-        (printf "GOING TO SYNC ON ~a\n" (build-es-list))
-        (apply sync/enable-break (build-es-list))
-        (printf "SYNCED ~a\n" i)
+        (define l (build-es-list))
+        ;(printf "GOING TO SYNC ON ~a\n" l)
+        (apply sync/enable-break l)
+        ;(printf "SYNCED ~a\n" i)
         (unless quit
           (loop (add1 i)))))
     (super-new)
