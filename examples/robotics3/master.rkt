@@ -15,11 +15,11 @@
 (define bank-place (send bank-vm get-first-place))
 
 (master-event-loop
-  ;(spawn-place-worker-at 6341 "ONE")
-  ;(spawn-place-worker-at 6342 "TWO")
-  ;(spawn-place-worker-at 6343 "THREE")
+  (spawn-place-worker-at 6341 "ONE")
+  (spawn-place-worker-at 6342 "TWO")
+  (spawn-place-worker-at 6343 "THREE")
   bank-vm
-  ;(every-seconds 3.3 (printf "Hello from every-seconds\n")(flush-output))
+  (every-seconds 3.3 (printf "Hello from every-seconds\n")(flush-output))
   (after-seconds 2
          (displayln (bank-new-account bank-place 'kevin))                                                                  
          (displayln (bank-add bank-place 'kevin 10))                                                                       

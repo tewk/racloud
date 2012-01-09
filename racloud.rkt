@@ -293,7 +293,7 @@
           (handle-evt 
             (if (dchannel? pch) (dchannel-ch pch) pch) 
             (lambda (e)
-              (printf "PLACE CHANNEL TO SOCKET ~a\n" e)
+              ;(printf "PLACE CHANNEL TO SOCKET ~a\n" e)
               (put-msg e)))
           nes))
       (define/public (get-msg)
@@ -352,7 +352,7 @@
             (place-channel-put d (dcgm DCGM-TYPE-NEW-DCHANNEL src dest pch2))]
           [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)
            (define pch (socket-channel-lookup-subchannel src-channel ch-id))
-           (printf "SOCKET to PLACE CHANNEL ~a\n" msg)
+           ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)
            (place-channel-put pch msg)]
           [(dcgm 6 #;(== DCGM-TYPE-SPAWN-REMOTE-PROCESS) src (list node-name node-port mod-path funcname) ch1)
            (send this add-to-router (new spawned-process% [cmdline-list
@@ -403,11 +403,11 @@
                     [(socket-channel? x)
                      (define in (socket-channel-in x))
                      (handle-evt in (lambda (e) 
-                                      (printf "VECTOR SOCKET MESSAGE ~a\n" e)
+                                      ;(printf "VECTOR SOCKET MESSAGE ~a\n" e)
                                       (forward-mesg (read in) x)))]
                     [(or (place-channel? x) (place? x))
                      (handle-evt x (lambda (e) 
-                                     (printf "VECTOR PLACE MESSAGE ~a\n" e)
+                                     ;(printf "VECTOR PLACE MESSAGE ~a\n" e)
                                      (forward-mesg e x)))])
                   n))
               nes)]
@@ -429,11 +429,11 @@
                     [(socket-channel? x)
                      (define in (socket-channel-in x))
                      (handle-evt in (lambda (e) 
-                                      (printf "SOCKET-PORT SOCKET MESSAGE ~a\n" e)
+                                      ;(printf "SOCKET-PORT SOCKET MESSAGE ~a\n" e)
                                       (forward-mesg (read in) x)))]
                     [(or (place-channel? x) (place? x))
                      (handle-evt x (lambda (e) 
-                                     (printf "SOCKET-PORT PLACE MESSAGE ~a\n" e)
+                                     ;(printf "SOCKET-PORT PLACE MESSAGE ~a\n" e)
                                      (forward-mesg e x)))])
                   n))
               nes)]
@@ -498,7 +498,7 @@
             (printf "PLACE ~a:~a:~a died\n" host-name listen-port ch-id)]
           [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)                                               
             (define pch (socket-channel-lookup-subchannel sc ch-id))                                  
-            (printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
+            ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
             (place-channel-put pch msg)] 
           [else (printf "received message ~a\n" it)]))
 
@@ -550,13 +550,11 @@
       (define/public (register es)
         (let* ([es (if pc (cons (handle-evt pc
                                             (if k
-                                              (begin
-                                                ;(printf "WE HAVE A C ~a ~a\n" k es)
-                                                (lambda (e)
-                                                  (printf "THIS IS E ~a\n" e)
+                                              (lambda (e)
+                                                (call-with-continuation-prompt (lambda ()
                                                   (begin0
-                                                  (k e)
-                                                  (set! k #f))))
+                                                    (k e)
+                                                    (set! k #f)))))
                                               on-channel-event)) es) es)]
                [es (send psb register es)])
           es))

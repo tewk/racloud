@@ -4,7 +4,8 @@
          racket/place
          racket/match
          racket/class
-         (for-syntax racket/pretty))
+         (for-syntax racket/pretty)
+         "racloud.rkt")
 
 (provide define-remote-server)
 
@@ -23,15 +24,15 @@
     [else
       (call-with-composable-continuation
         (lambda (k) 
-          (send dest set-continuation k)))
-      (abort-current-continuation (default-continuation-prompt-tag) void)]))
+          (send dest set-continuation k)
+          (abort-current-continuation (default-continuation-prompt-tag) void)))]))
 
 (define (some-channel-put dest msg)
   (cond
     [(place-channel? dest) (place-channel-put dest msg)]
     [else
       (define pch (send dest get-channel))
-      (printf "some-channel-sending-message ~a ~a\n" pch msg)
+      ;(printf "some-channel-sending-message ~a ~a\n" pch msg)
       (place-channel-put pch msg)]))
 
 (define-syntax (define-remote-server stx)
