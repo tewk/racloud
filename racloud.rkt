@@ -118,6 +118,10 @@
   (cdr (assoc ch-id (socket-channel-subchannels s))))
 (define (socket-channel-write-flush s x)
   (write-flush x (socket-channel-out s)))
+(define (socket-channel-remove-subchannel sc scid)
+  (set-socket-channel-subchannels! sc (filter-map 
+                                        (lambda (x) (and (not (= (car x) scid)) x)) 
+                                        (socket-channel-subchannels sc))))
 
 ;distributed communication group
 (struct dcg (ch id n))
@@ -207,7 +211,7 @@
     (trait
       (field [router #f])
       (define/public (remove-from-router)
-        (send router remove-ec this))
+        (and router (send router remove-ec this)))
       (define/public (add-to-router x)
         (send router add-ec x))
       (define/public (recompute-sync-list)
@@ -237,22 +241,23 @@
     (class* 
       object% (event-container<%>)
       (init-field cmdline-list)
+      (init-field [parent #f])
       (field [s #f]
              [i #f]
              [o #f]
              [e #f]
              [pid #f])
 
-      (printf "SPAWNING-PROCESS: ~a\n" cmdline-list)
-
       (let-values ([(_s _o _i _e) (apply subprocess #f #f #f cmdline-list)])
         (set! pid (subprocess-pid _s)) 
         (set! s _s)
-        (set! o _o)
-        (set! i _i)
-        (set! e _e))
+        (set! o (box _o))
+        (set! i (box _i))
+        (set! e (box _e)))
+      (printf "SPAWNED-PROCESS:~a ~a\n" pid cmdline-list)
 
-      (define (mk-handler port desc)
+      (define (mk-handler _port desc)
+        (define port (unbox _port))
         (if port
           (handle-evt port (lambda (e) 
             (define (print-out x) (printf "SPAWNED-PROCESS ~a:~a:~a ~a\n" pid desc (->length x) x)
@@ -265,16 +270,18 @@
                 (cond 
                   [(eof-object? bbl) 
                    (print-out "EOF")                                                                      
-                   (set! port #f)]
+                   (set-box! _port #f)]
                   [else                                                                                   
                    (print-out (subbytes bb 0 bbl))])])))
           #f))
 
+      (define/public (get-pid) pid)
       (define/public (register nes)
         (for/filter/fold/cons nes ([x (list s (list o "OUT") (list e "ERR"))])
           (cond 
             [(subprocess? x) (handle-evt s (lambda (e) 
                                              (printf "SUBPROCESS DIED\n")
+                                             (and parent (send parent process-died this))
                                              (send this remove-from-router)))]
             [(list? x) (apply mk-handler x)]
             [else #f])))
@@ -296,6 +303,7 @@
               ;(printf "PLACE CHANNEL TO SOCKET ~a\n" e)
               (put-msg e)))
           nes))
+      (define/public (get-sc-id) id)
       (define/public (get-msg)
         (let loop ()
           (define msg (read (socket-channel-in sch)))
@@ -415,8 +423,9 @@
             (if listen-port
               (cons
                 (handle-evt listen-port (lambda (e)
-                  (printf "INCOMING CONNECTION\n")
                   (define-values (in out) (tcp-accept listen-port))
+                  (define-values (lh lp rh rp) (tcp-addresses in #t))
+                  (printf "INCOMING CONNECTION ~a:~a <- ~a:~a\n" lh lp rh rp)
                   (define sp (socket-channel in out null))
                   (add-socket-port sp)))
                 nes)
@@ -486,16 +495,26 @@
         )
 
       (when (and cmdline-list (not sc))
-        (set! sp (new spawned-process% [cmdline-list cmdline-list])))
+        (set! sp (new spawned-process% [cmdline-list cmdline-list] [parent this])))
       (unless sc
         (define-values (in out) (tcp-connect/retry host-name listen-port))
         (set! sc (socket-channel in out null)))
+
+      (define (find-place-by-sc-id scid)
+        (for/fold ([r #f]) ([rp remote-places])
+          (if (= (send rp get-sc-id) scid)
+            rp
+            r)))
 
       (define (on-socket-event e)
         (define it (read e))
         (match it
           [(dcgm 7 #;(== DCGM-DPLACE-DIED) -1 -1 ch-id)
-            (printf "PLACE ~a:~a:~a died\n" host-name listen-port ch-id)]
+            (printf "SPAWNED-PROCESS:~a PLACE DIED ~a:~a:~a\n" (send sp get-pid) host-name listen-port ch-id)
+            (cond 
+              [(find-place-by-sc-id ch-id) => (lambda (rp)
+                                                (send rp place-died))]
+              [else (printf "remote-place for sc-id ~a not found\n" ch-id)])]
           [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)                                               
             (define pch (socket-channel-lookup-subchannel sc ch-id))                                  
             ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
@@ -503,12 +522,18 @@
           [else (printf "received message ~a\n" it)]))
 
       (define/public (get-log-prefix) (format "PLACE ~a:~a" host-name listen-port))
+      (define/public (process-died child) 
+        (printf "Remote VM pid ~a ~a:~a died\n" (send sp get-pid) host-name listen-port)
+        (set! sp #f))
 
       (define/public (get-first-place)
         (car remote-places))
+
+      (define/public (drop-sc-id scid)
+        (socket-channel-remove-subchannel sc scid))
                      
-      (define/public (launch-place place-exec)
-        (define rp (new remote-place% [vm this] [place-exec place-exec]))
+      (define/public (launch-place place-exec #:restart-on-exit [restart-on-exit #f])
+        (define rp (new remote-place% [vm this] [place-exec place-exec] [restart-on-exit restart-on-exit]))
         (add-remote-place rp)
         rp)
 
@@ -534,6 +559,7 @@
       object% (event-container<%>)
       (init-field vm)
       (init-field [place-exec #f])
+      (init-field [restart-on-exit #f])
       (field [psb #f])
       (field [pc #f])
       (field [running #f])
@@ -545,6 +571,16 @@
 
       (define/public (stop) (void))
       (define/public (get-channel) pc)
+      (define/public (get-sc-id) (send psb get-sc-id))
+      (define/public (place-died)
+        (cond
+          [restart-on-exit
+            (send vm drop-sc-id (send psb get-sc-id))
+            (set! psb (send vm spawn-remote-place place-exec pch1))]
+          [else
+            (printf "No restart condition for ~a:~a\n" 
+                    (send vm get-log-prefix)
+                    (send psb get-sc-id))]))
       (define (on-channel-event e)
         (printf "~a ~a\n" (send vm get-log-prefix) e))
       (define/public (register es)
@@ -578,9 +614,9 @@
       (field [running #f])
       (define (default-on-place-dead e)
         (set! pd #f)
-        (printf "PLACE DIED ~a\n" e)
-        (flush-output)
-        (write-flush (dcgm DCGM-DPLACE-DIED -1 -1 ch-id) (socket-channel-out sc)))
+        (socket-channel-write-flush sc (dcgm DCGM-DPLACE-DIED -1 -1 ch-id))
+        (socket-channel-remove-subchannel sc ch-id)
+        (send this remove-from-router))
 
       (init-field [on-place-dead default-on-place-dead])
 
@@ -832,7 +868,7 @@
     (send vm launch-place 
         place-exec
         ;#:initial-message initial-message
-        ;#:restart-on-exit restart-on-exit
+        #:restart-on-exit restart-on-exit
         ))
 
   vm)
