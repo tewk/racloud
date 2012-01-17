@@ -2,7 +2,7 @@
 (require racket/place
          racket/match
          racket/runtime-path
-         (except-in "../../racloud.rkt" main))
+         "../../racloud.rkt")
 
 (provide control-node
          main

@@ -1,7 +1,7 @@
 #lang racket/base
 (require racket/place
          racket/match
-         (except-in "../../racloud.rkt" main))
+         "../../racloud.rkt")
 
 (provide executor-node)
 

@@ -1,5 +1,5 @@
 #lang racket/base
-(require (except-in "../../racloud.rkt" main)
+(require "../../racloud.rkt"
          racket/class
          racket/place)
 
@@ -14,4 +14,4 @@
 
 (define (main)
   (master-event-loop
-    (supervise-place-thunk-at "localhost" #:listen-port 6345 (get-current-module-path) 'wait-place-thunk #:restart-on-exit #t)))
+    (spawn-vm-supervise-place-thunk-at "localhost" #:listen-port 6345 (get-current-module-path) 'wait-place-thunk #:restart-on-exit #t)))

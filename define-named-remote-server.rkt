@@ -7,7 +7,7 @@
          (for-syntax racket/pretty)
          "racloud.rkt")
 
-(provide define-remote-server)
+(provide define-named-remote-server)
 
 (define-syntax define/provide
   (syntax-rules ()
@@ -34,7 +34,7 @@
       (define pch (send dest get-channel))
       (place-channel-put pch msg)]))
 
-(define-syntax (define-remote-server stx)
+(define-syntax (define-named-remote-server stx)
   (syntax-case stx ()
     [(_ name forms ...)
      (let ()
@@ -78,11 +78,11 @@
                             [(_ (fname args ...) body ...)
                              (let ()
                              (with-syntax ([fname-symbol #'(quote fname)])
-                               #'[(list fname-symbol args ...)
+                               #'[(list (list fname-symbol args ...) src)
                                    (define result 
                                      (let ()
                                        body ...))
-                                   (place-channel-put ch result)
+                                   (place-channel-put src result)
                                    (loop)]))]))])
         #`(place ch
             (let ()

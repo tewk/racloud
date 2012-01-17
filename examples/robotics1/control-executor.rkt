@@ -3,7 +3,7 @@
          racket/match
          racket/runtime-path
          racket/pretty
-         (except-in "../../racloud.rkt" main))
+         "../../racloud.rkt")
 
 (provide control-node
          executor-node

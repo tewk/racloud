@@ -1,8 +1,8 @@
 #lang racket/base
 (require racket/place)
 
-(provide place-worker)
-(provide main)
+(provide place-worker
+         main)
 
 (define (place-worker ch)
   (random-seed (current-seconds))

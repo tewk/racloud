@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require (except-in "../../racloud.rkt" main)
+(require "../../racloud.rkt"
          racket/runtime-path)
 
 (define-runtime-path hello-path "hello.rkt")
