@@ -333,6 +333,7 @@
       (init-field [socket-ports null])
       (init-field [sub-ecs null])
       (init-field [psbs null])
+      (init-field [spawned-vms null])
       (init-field [named-places (make-hash)])
       (init-field [beacon #f])
       (field [id 0])
@@ -343,6 +344,8 @@
         (set! socket-ports (append socket-ports (list pair))))
       (define/public (add-sub-ec ec)
         (set! sub-ecs (append sub-ecs (list ec))))
+      (define (add-spawned-vm ec)
+        (set! spawned-vms (append spawned-vms (list ec))))
       (define (add-psb ec)
         (set! psbs (append psbs (list ec))))
       (define (add-named-place name np)
@@ -409,6 +412,7 @@
                   [host-name node-name]
                   [listen-port node-port]
                   [cmdline-list (list (ssh-bin-path)  node-name (racket-path) "-tm" (->string racloud-launch-path) "spawn" (->string node-port))]))
+           (add-spawned-vm vm)
            (send vm launch-place 
                     (list 'dynamic-place mod-path funcname)
                     ;#:initial-message initial-message
@@ -496,6 +500,11 @@
            [nes
             (if psbs
               (for/fold ([n nes]) ([x psbs])
+                (send x register n))
+              nes)]
+           [nes
+            (if spawned-vms
+              (for/fold ([n nes]) ([x spawned-vms])
                 (send x register n))
               nes)]
            [nes (register-beacon nes)])

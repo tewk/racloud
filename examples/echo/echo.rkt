@@ -23,7 +23,7 @@
           (dcg-send-new-dchannel c i)))
       (for ([i (in-range 1 (dcg-n c))]
             [ch new-channels])
-        (dchannel-put ch (format "Hello on new chanel ~a" i)))
+        (dchannel-put ch (format "Hello on new channel ~a" i)))
       (sleep 1)
       (define hch (dcg-spawn-remote-dplace c "nan4" #:listen-port 6434 (path->string hello-path) 'hello))
       (dchannel-put hch "Hello new node!")
