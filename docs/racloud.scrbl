@@ -1,7 +1,7 @@
 #lang scribble/manual
 @(require scribble/eval)
 @(require racket/contract)
-@(require (for-label "racloud.rkt"))
+@(require (for-label "../racloud.rkt"))
 
 @title[#:tag "racloud"]{Racloud}
 
@@ -26,35 +26,62 @@ Design Pattern 2: (examples robotics3)
 Waits for an one of many events to become ready.  Endless loop.
 }
 
-@defproc[(spawn-vm-supervise-dynamic-place-at [hostname string?] 
-                             [compute-instance-module-path module-path?]
-                             [compute-instance-function-name symbol?]
-                             [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
-                             [#:initial-message initial-message any? #f]                                            
-                             [#:racket-path racketpath string-path? (racket-path)]                                          
-                             [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
-                             [#:racloud-launch-path racloudpath string-path? (->string racloud-launch-path)]                                       
-                             [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
-Spawns a new singleton node with one compute instance. This new compute instance is an orphan.  It is not
-connected to any @racket[dcg].
+@defproc[(spawn-vm-supervise-dynamic-place-at 
+           [hostname string?] 
+           [compute-instance-module-path module-path?]
+           [compute-instance-place-function-name symbol?]
+           [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
+           [#:initial-message initial-message any? #f]                                            
+           [#:racket-path racketpath string-path? (racket-path)]                                          
+           [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
+           [#:racloud-launch-path racloudpath string-path? (->string racloud-launch-path)]                                       
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+Spawns a new remote vm node at @racket[hostname] with one compute instance place.
 }
 
-@defproc[(spawn-vm-supervise-place-thunk-at [hostname string?] 
-                             [compute-instance-module-path module-path?]
-                             [compute-instance-function-name symbol?]
-                             [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
-                             [#:initial-message initial-message any? #f]                                            
-                             [#:racket-path racketpath string-path? (racket-path)]                                          
-                             [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
-                             [#:racloud-launch-path racloudpath string-path? (->string racloud-launchpath)]                                       
-                             [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
-Spawns a new singleton node with one compute instance. This new compute instance is an orphan.  It is not
-connected to any @racket[dcg].
+@defproc[(spawn-vm-supervise-place-thunk-at 
+           [hostname string?] 
+           [compute-instance-module-path module-path?]
+           [compute-instance-thunk-function-name symbol?]
+           [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
+           [#:initial-message initial-message any? #f]                                            
+           [#:racket-path racketpath string-path? (racket-path)]                                          
+           [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
+           [#:racloud-launch-path racloudpath string-path? (->string racloud-launchpath)]                                       
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+Spawns a new remote vm node at @racket[hostname] with one compute instance place.
 }
 
 @defproc[(supervise-process-at [hostname string?] 
                                [commandline-argument string?] ...+
                                [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]) remote-process-supervisor%?]{
-Spawns a new singleton node with an attached external process. This new node is an orphan.  It is not
-connected to any @racket[dcg].
+Spawns an attached external process at host @racket[hostname].
+}
+
+@defproc[(supervise-named-dynamic-place-at 
+           [remote-vm remote-vm?]
+           [place-name symbol?]
+           [compute-instance-module-path module-path?]
+           [compute-instance-place-function-name symbol?]
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+Creates a new place on the @racket[remote-vm] by dynamic-place invoking @racket[compute-instance-place-function-name]
+from the module @racket[compute-instance-module-path].
+}
+
+@defproc[(supervise-named-place-thunk-at 
+           [remote-vm remote-vm?]
+           [place-name symbol?]
+           [compute-instance-module-path module-path?]
+           [compute-instance-thunk-function-name symbol?]
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+Creates a new place on the @racket[remote-vm] by executing the thunk @racket[compute-instance-place-function-name]
+from the module @racket[compute-instance-module-path].
+}
+
+@defform[(every-seconds seconds body ....)]{
+Executes the body expressions every @racket[seconds].
+}
+
+@defform[(after-seconds seconds body ....)]{
+Executes the body expressions after a delay of @racket[seconds] from the start of the event loop..
 }

@@ -1,3 +1,9 @@
+#lang scribble/manual
+@(require scribble/eval)
+@(require racket/contract)
+@(require (for-label "../racloud.rkt"))
+
+@title[#:tag "racloud"]{Racloud}
 
 Design Pattern 1: (examples echo, robotics1, and robotics2)
 

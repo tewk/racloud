@@ -30,5 +30,8 @@
       (displayln (tuple-server-get c "Kevin"))
       (displayln (tuple-server-get d "Kyle"))
       (displayln (tuple-server-get d "Kevin"))
-      (displayln (tuple-server-get c "Kyle"))
-                   )))
+      (displayln (tuple-server-get c "Kyle")))
+    (after-seconds 6
+      (vm-send-exit remote-vm))
+    (after-seconds 8
+      (exit 0))))

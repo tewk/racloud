@@ -13,7 +13,7 @@
 (provide main)
 
 (define (spawn-place-worker-at port message)
-  (spawn-vm-supervise-dynamic-place-at "localhost" #:listen-port port place-worker-path 'place-worker #:initial-message message #:restart-on-exit #t))
+  (spawn-vm-supervise-dynamic-place-at "localhost" #:listen-port port place-worker-path 'place-worker #:initial-message message #:restart-on-exit #f))
 
 (define (wait-place-thunk)
   (place ch
@@ -21,10 +21,10 @@
     (sleep 5)
     (printf "SLEEP DONE\n")))
 
-(define bank-vm (spawn-vm-supervise-place-thunk-at "localhost" #:listen-port 6344 bank-path 'make-bank))
-(define bank-place (send bank-vm get-first-place))
 
 (define (main)
+  (define bank-vm (spawn-vm-supervise-place-thunk-at "localhost" #:listen-port 6344 bank-path 'make-bank))
+  (define bank-place (send bank-vm get-first-place))
   (master-event-loop
     (spawn-place-worker-at 6341 "ONE")
     (spawn-place-worker-at 6342 "TWO")
@@ -36,4 +36,4 @@
       (displayln (bank-new-account bank-place 'kevin))                                                                  
       (displayln (bank-add bank-place 'kevin 10))                                                                       
       (displayln (bank-removeM bank-place 'kevin 5)))
-    #;(supervise-process-at "localhost" #:listen-port 6344 process-worker-path #:restart-on-exit #t)))
+    ))

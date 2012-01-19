@@ -18,7 +18,7 @@
      (begin (provide name)                                                                                    
             (define name val))]))
 
-(define (some-channel-get dest)
+(define (named-place-channel-get dest)
   (cond
     [(place-channel? dest) (place-channel-get dest)]
     [else
@@ -27,7 +27,7 @@
           (send dest set-continuation k)
           (abort-current-continuation (default-continuation-prompt-tag) void)))]))
 
-(define (some-channel-put dest msg)
+(define (named-place-channel-put dest msg)
   (cond
     [(place-channel? dest) (place-channel-put dest msg)]
     [else
@@ -63,8 +63,8 @@
              (with-syntax ([fname-symbol (string->id stx (format "~a-~a" (id->string  #'name) (id->string #'fname)))])
 
                #'(define/provide (fname-symbol dest args ...)
-                     (some-channel-put dest (list (quote fname) args ...))
-                     (some-channel-get dest)))])))
+                     (named-place-channel-put dest (list (quote fname) args ...))
+                     (named-place-channel-get dest)))])))
 
       (define trans-place
         (with-syntax ([(states2 ...)
