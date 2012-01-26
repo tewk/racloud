@@ -11,6 +11,7 @@
 (provide ssh-bin-path
          racket-path
          racloud-path
+         racloud-launch-path
          get-current-module-path
 
          ;; New Design Pattern 2 API
@@ -61,6 +62,9 @@
          startup-config
          (struct-out node-config)
          (struct-out dcg)
+
+         event-container<%>
+
          )
 
 (define-runtime-path racloud-launch-path "launch.rkt")
@@ -99,8 +103,31 @@
 (define (racloud-path)
   (path->string (resolved-module-path-name (variable-reference->resolved-module-path (#%variable-reference)))))
 
-; hard-coded default for ssh binary
-(define (ssh-bin-path) "/usr/bin/ssh")
+; find ssh-binary
+(define (ssh-bin-path)
+  (define (exists? paths)
+    (and paths
+         (for/or ([p paths]) (and (file-exists? p) p))))
+
+  (define (fallback-paths)
+    (exists?
+      (case (system-type 'os)
+        [(unix macosx)
+          (list "/usr/local/bin/ssh" "/usr/bin/ssh" "/bin/ssh" "/opt/local/bin/ssh" "/opt/bin/ssh")]
+        [(windows) #f])))
+
+  (define (which cmd)
+    (define path (getenv "PATH"))
+    (and path
+         (exists? (map (lambda (x) (build-path x cmd)) (regexp-split (case (system-type 'os)
+                                    [(unix macosx) ":"]
+                                    [(windows) "#:;"])
+                                  path)))))
+  (or (which "ssh")
+      (fallback-paths)
+      (raise "ssh binary not found")))
+
+
 
 (define (write-flush msg [p (current-output-port)])
   (write msg p)
@@ -521,6 +548,8 @@
       (super-new)
   )))
 
+
+; currently not used
 (define socket-connection%
   (backlink
     (class* object% (event-container<%>)
@@ -649,6 +678,7 @@
       (init-field [place-exec #f])
       (init-field [restart-on-exit #f])
       (init-field [one-sided-place #f])
+      (init-field [on-channel/2 #f])
       (field [psb #f])
       (field [pc #f])
       (field [rpc #f])
@@ -667,6 +697,7 @@
 
       (define/public (stop) (void))
       (define/public (get-channel) pc)
+      (define/public (set-on-channel/2! proc) (set! on-channel/2 proc))
       (define/public (get-sc-id) (send psb get-sc-id))
       (define/public (place-died)
         (cond
@@ -681,13 +712,18 @@
         (printf "~a ~a\n" (send vm get-log-prefix) e))
       (define/public (register es)
         (let* ([es (if pc (cons (handle-evt pc
-                                            (if k
-                                              (lambda (e)
-                                                (call-with-continuation-prompt (lambda ()
-                                                  (begin0
-                                                    (k e)
-                                                    (set! k #f)))))
-                                              on-channel-event)) es) es)]
+                                            (cond
+                                              [k
+                                               (lambda (e)
+                                                 (call-with-continuation-prompt (lambda ()
+                                                   (begin0
+                                                     (k e)
+                                                     (set! k #f)))))]
+                                              [on-channel/2
+                                                (lambda (e)
+                                                  (on-channel/2 pc e))]
+                                              [else
+                                               on-channel-event])) es) es)]
                [es (send psb register es)])
           es))
       (define/public (set-continuation _k) (set! k _k))
@@ -705,6 +741,7 @@
       (init-field vm)
       (init-field name)
       (init-field [restart-on-exit #f])
+      (init-field [on-channel/2 #f])
       (field [psb #f])
       (field [pc #f])
       (field [running #f])
@@ -716,6 +753,7 @@
 
       (define/public (stop) (void))
       (define/public (get-channel) pc)
+      (define/public (set-on-channel/2! proc) (set! on-channel/2 proc))
       (define/public (get-sc-id) (send psb get-sc-id))
       (define/public (place-died)
             (printf "No restart condition for ~a:~a\n" 
@@ -725,13 +763,18 @@
         (printf "~a ~a\n" (send vm get-log-prefix) e))
       (define/public (register es)
         (let* ([es (if pc (cons (handle-evt pc
-                                            (if k
-                                              (lambda (e)
-                                                (call-with-continuation-prompt (lambda ()
-                                                  (begin0
-                                                    (k e)
-                                                    (set! k #f)))))
-                                              on-channel-event)) es) es)]
+                                            (cond
+                                              [k
+                                               (lambda (e)
+                                                 (call-with-continuation-prompt (lambda ()
+                                                   (begin0
+                                                     (k e)
+                                                     (set! k #f)))))]
+                                              [on-channel/2
+                                                (lambda (e)
+                                                  (on-channel/2 pc e))]
+                                              [else
+                                               on-channel-event])) es) es)]
                [es (send psb register es)])
           es))
       (define/public (set-continuation _k) (set! k _k))
@@ -762,10 +805,12 @@
 
       (set! pd 
         (match place-exec
+          ;supervised place is a named place
           [(list 'dynamic-place place-path place-func name)
             (dynamic-place (->path place-path) place-func)]
           [(list 'place place-path place-func name)
             ((dynamic-require (->path place-path) place-func))]
+          ;supervised place is a single connected place
           [(list 'dynamic-place place-path place-func)
             (dynamic-place (->path place-path) place-func)]
           [(list 'place place-path place-func)
@@ -1108,4 +1153,3 @@
             (flush-output out)
             (sleep))
           (subprocess-kill (first (first n)) #f))))))
-

@@ -1,5 +1,5 @@
 #lang racket/base
-(require "../../racloud.rkt"
+erequire "../../racloud.rkt"
          racket/class
          racket/place
          racket/runtime-path
