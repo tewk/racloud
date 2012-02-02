@@ -296,7 +296,7 @@
       (define (mk-handler _port desc)
         (define port (unbox _port))
         (if port
-          (handle-evt port (lambda (e) 
+          (wrap-evt port (lambda (e) 
             (define (print-out x) (printf "SPAWNED-PROCESS ~a:~a:~a ~a\n" pid desc (->length x) x)
               (flush-output)) 
             (cond 
@@ -316,7 +316,7 @@
       (define/public (register nes)
         (for/filter/fold/cons nes ([x (list s (list o "OUT") (list e "ERR"))])
           (cond 
-            [(subprocess? x) (handle-evt s (lambda (e) 
+            [(subprocess? x) (wrap-evt s (lambda (e) 
                                              (printf "SPAWNED-PROCESS ~a DIED\n" pid)
                                              (and parent (send parent process-died this))))]
             [(list? x) (apply mk-handler x)]
@@ -333,7 +333,7 @@
                   id)
       (define/public (register nes)
         (cons 
-          (handle-evt 
+          (wrap-evt 
             (if (dchannel? pch) (dchannel-ch pch) pch) 
             (lambda (e)
               ;(printf "PLACE CHANNEL TO SOCKET ~a\n" e)
@@ -468,7 +468,7 @@
           [(equal? #t beacon)
            (set! beacon (udp-open-socket))
            (udp-bind! beacon "255.255.255.255" DEFAULT-ROUTER-PORT)
-           (handle-evt (udp-receive!-evt beacon us-buffer) 
+           (wrap-evt (udp-receive!-evt beacon us-buffer) 
             (match-lambda 
               [(list count host port)
               (void)]))]))
@@ -483,11 +483,11 @@
                   (cond
                     [(socket-channel? x)
                      (define in (socket-channel-in x))
-                     (handle-evt in (lambda (e) 
+                     (wrap-evt in (lambda (e) 
                                       ;(printf "VECTOR SOCKET MESSAGE ~a\n" e)
                                       (forward-mesg (read in) x)))]
                     [(or (place-channel? x) (place? x))
-                     (handle-evt x (lambda (e) 
+                     (wrap-evt x (lambda (e) 
                                      ;(printf "VECTOR PLACE MESSAGE ~a\n" e)
                                      (forward-mesg e x)))])
                   n))
@@ -495,7 +495,7 @@
            [nes 
             (if listen-port
               (cons
-                (handle-evt listen-port (lambda (e)
+                (wrap-evt listen-port (lambda (e)
                   (define-values (in out) (tcp-accept listen-port))
                   (define-values (lh lp rh rp) (tcp-addresses in #t))
                   (printf "INCOMING CONNECTION ~a:~a <- ~a:~a\n" lh lp rh rp)
@@ -510,11 +510,11 @@
                   (cond
                     [(socket-channel? x)
                      (define in (socket-channel-in x))
-                     (handle-evt in (lambda (e) 
+                     (wrap-evt in (lambda (e) 
                                       ;(printf "SOCKET-PORT SOCKET MESSAGE ~a\n" e)
                                       (forward-mesg (read in) x)))]
                     [(or (place-channel? x) (place? x))
-                     (handle-evt x (lambda (e) 
+                     (wrap-evt x (lambda (e) 
                                      ;(printf "SOCKET-PORT PLACE MESSAGE ~a\n" e)
                                      (forward-mesg e x)))])
                   n))
@@ -558,7 +558,7 @@
       (define (forward-mesg x) (void))
       (define/public (register nes)
         (cons 
-          (handle-evt in (lambda (e) 
+          (wrap-evt in (lambda (e) 
             (printf "SOCKET-CONNECTION SOCKET MESSAGE ~a\n" e)
             (forward-mesg (read in))))
           nes))
@@ -628,6 +628,8 @@
 
       (define/public (get-first-place)
         (car remote-places))
+      (define/public (get-first-place-channel)
+        (send (car remote-places) get-channel))
 
       (define/public (drop-sc-id scid)
         (socket-channel-remove-subchannel sc scid))
@@ -662,7 +664,7 @@
         (let* ([es (if sp (send sp register es) es)]
                [es (for/fold ([nes es]) ([rp remote-places])
                              (send rp register nes))]
-               [es (if sc (cons (handle-evt (socket-channel-in sc) on-socket-event) es) es)])
+               [es (if sc (cons (wrap-evt (socket-channel-in sc) on-socket-event) es) es)])
           es))
 
       (super-new)
@@ -684,6 +686,7 @@
       (field [rpc #f])
       (field [running #f])
       (field [k #f])
+      (field [handle-channel #t])
 
       (cond 
         [one-sided-place
@@ -699,6 +702,7 @@
       (define/public (get-channel) pc)
       (define/public (set-on-channel/2! proc) (set! on-channel/2 proc))
       (define/public (get-sc-id) (send psb get-sc-id))
+      (define/public (set-handle-channel! x) (set! handle-channel x))
       (define/public (place-died)
         (cond
           [restart-on-exit
@@ -711,7 +715,8 @@
       (define (on-channel-event e)
         (printf "~a ~a\n" (send vm get-log-prefix) e))
       (define/public (register es)
-        (let* ([es (if pc (cons (handle-evt pc
+        (let* ([es (if (and handle-channel pc)
+                       (cons (wrap-evt pc
                                             (cond
                                               [k
                                                (lambda (e)
@@ -720,10 +725,11 @@
                                                      (k e)
                                                      (set! k #f)))))]
                                               [on-channel/2
-                                                (lambda (e)
-                                                  (on-channel/2 pc e))]
+                                               (lambda (e)
+                                                 (on-channel/2 pc e))]
                                               [else
-                                               on-channel-event])) es) es)]
+                                               on-channel-event])) es) 
+                       es)]
                [es (send psb register es)])
           es))
       (define/public (set-continuation _k) (set! k _k))
@@ -762,7 +768,7 @@
       (define (on-channel-event e)
         (printf "~a ~a\n" (send vm get-log-prefix) e))
       (define/public (register es)
-        (let* ([es (if pc (cons (handle-evt pc
+        (let* ([es (if pc (cons (wrap-evt pc
                                             (cond
                                               [k
                                                (lambda (e)
@@ -828,7 +834,7 @@
           [else (void)])) ;send place not running message
 
       (define/public (register es)
-        (let* ([es (if pd (cons (handle-evt (place-dead-evt pd) on-place-dead) es) es)]
+        (let* ([es (if pd (cons (wrap-evt (place-dead-evt pd) on-place-dead) es) es)]
                [es (if psb (send psb register es) es)])
           es))
       (super-new)
@@ -877,7 +883,7 @@
       (define/public (register es)
         (if fire-time 
           (cons 
-            (handle-evt (alarm-evt fire-time)
+            (wrap-evt (alarm-evt fire-time)
                         (lambda (x) 
                           (set! fire-time (+ (current-inexact-milliseconds) (* seconds 1000)))
                           (thunk)))
@@ -898,7 +904,7 @@
       (define/public (register es)
         (if fire-time 
           (cons 
-            (handle-evt (alarm-evt fire-time)
+            (wrap-evt (alarm-evt fire-time)
                         (lambda (x)
                           (set! fire-time #f)
                           (call-with-continuation-prompt thunk)))
@@ -1117,7 +1123,7 @@
       (define (mkhandler port config)
         (let ()
           (define self
-            (handle-evt port
+            (wrap-evt port
               (lambda (x)
                 (define bbl (read-bytes-avail!* bb x))
                 (define (print-out x)
