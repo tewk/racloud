@@ -1,0 +1,8 @@
+docs/*.css
+docs/*.html
+docs/*-common.js
+docs/*.pdf
+docs/*.png
+docs/*.svg
+docs/*.rkt~
+

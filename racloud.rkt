@@ -241,12 +241,12 @@
 ;; Example:
 
 (define (start-spawned-node-router listener)
-  (define nc (new node-controller% [listen-port listener]))
+  (define nc (new node% [listen-port listener]))
   (send nc sync-events)) 
    
 
 (define (start-node-router chan-vec)
-  (define nc (new node-controller% [chan-vec chan-vec]))
+  (define nc (new node% [chan-vec chan-vec]))
   (send nc sync-events)) 
 
 (define backlink 
@@ -351,7 +351,7 @@
       (super-new)
   )))
 
-(define node-controller% 
+(define node% 
   (backlink
     (class*
       object% (event-container<%>)
@@ -400,7 +400,7 @@
               (define np (named-place-lookup name))
               (cond 
                 [np 
-                  (define nc (new supervised-connection%
+                  (define nc (new connection%
                                  [name-pl np]
                                  [ch-id ch-id]
                                  [sc src-channel]))
@@ -411,7 +411,7 @@
                                                        (format "ERROR: name not found ~a" name)))])]
 
              [else
-              (define np (new supervised-place%
+              (define np (new place%
                              [place-exec place-exec]
                              [ch-id ch-id]
                              [sc src-channel]))
@@ -431,11 +431,11 @@
               [(place-channel? pch)
                 ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
                 (place-channel-put pch msg)] 
-              [(is-a? pch supervised-connection%)
+              [(is-a? pch connection%)
                (send pch forward msg)])]
           [(dcgm 6 #;(== DCGM-TYPE-SPAWN-REMOTE-PROCESS) src (list node-name node-port mod-path funcname) ch1)
            (define vm
-             (new remote-vm%
+             (new remote-node%
                   [host-name node-name]
                   [listen-port node-port]
                   [cmdline-list (list (ssh-bin-path)  node-name (racket-path) "-tm" (->string racloud-launch-path) "spawn" (->string node-port))]))
@@ -565,7 +565,7 @@
       (super-new)
   )))
 
-(define remote-vm%
+(define remote-node%
   (backlink
     (class* 
       object% (event-container<%>)
@@ -612,7 +612,7 @@
               [(place-channel? pch)
                 ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
                 (place-channel-put pch msg)] 
-              [(is-a? pch supervised-connection%)
+              [(is-a? pch connection%)
                (send pch forward msg)])]
           [(? eof-object?)
            (define-values (lh lp rh rp) (tcp-addresses (socket-channel-in sc) #t))
@@ -785,7 +785,7 @@
       (super-new)
       )))
 
-(define supervised-place%
+(define place%
   (backlink
     (class* 
       object% (event-container<%>)
@@ -805,12 +805,12 @@
 
       (set! pd 
         (match place-exec
-          ;supervised place is a named place
+          ;place% is a named place
           [(list 'dynamic-place place-path place-func name)
             (dynamic-place (->path place-path) place-func)]
           [(list 'place place-path place-func name)
             ((dynamic-require (->path place-path) place-func))]
-          ;supervised place is a single connected place
+          ;place% is a single connected place
           [(list 'dynamic-place place-path place-func)
             (dynamic-place (->path place-path) place-func)]
           [(list 'place place-path place-func)
@@ -834,7 +834,7 @@
       (super-new)
       )))
 
-(define supervised-connection%
+(define connection%
   (backlink
     (class* 
       object% (event-container<%>)
@@ -1057,7 +1057,7 @@
 
 (define (master-event-loop #:listen-port [listen-port DEFAULT-ROUTER-PORT] . event-containers)
   (define listener (tcp-listen listen-port 4 #t))
-  (define nc (new node-controller% [listen-port listener]))
+  (define nc (new node% [listen-port listener]))
   (for ([ec event-containers])
     (send nc add-sub-ec ec))
   (send nc sync-events)) 
@@ -1067,7 +1067,7 @@
                                      #:racket-path [racketpath (racket-path)]
                                      #:ssh-bin-path [sshpath (ssh-bin-path)]
                                      #:racloud-launch-path [racloudlaunchpath (->string racloud-launch-path)])
-  (new remote-vm%
+  (new remote-node%
        [host-name host]
        [listen-port listen-port]
        [cmdline-list (list sshpath host racketpath "-tm" racloud-launch-path "spawn" (->string listen-port))]))

@@ -5,6 +5,8 @@
 
 @title[#:tag "racloud"]{Racloud}
 
+@defmodule["../racloud.rkt"]
+
 Design Pattern 1: (examples echo, robotics1, and robotics2)
 
 A Racloud distributed system is made up of a set of Racket instances, called nodes, running on machines.

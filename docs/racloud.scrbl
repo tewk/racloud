@@ -34,15 +34,15 @@ Design Pattern 2: (examples robotics3)
 
 @defproc[(master-event-loop [ec events-container?] ...+) void?]{
 Waits for an one of many events to become ready.  Endless loop.
-The @racket[master-event-loop] procedure constructs a @racket[node-controller%] instance and adds all the declared
-@racket[events-container<%>]s to the @racket[node-controller%] and then calls the never ending loop @racket[sync-events]
+The @racket[master-event-loop] procedure constructs a @racket[node%] instance and adds all the declared
+@racket[events-container<%>]s to the @racket[node%] and then calls the never ending loop @racket[sync-events]
 method which handles the events for the node.
 }
 @(define (p . l) (decode-paragraph l))
 @(define spawn-vm-note
     (make-splice                                                                                              
      (list                                                                                                    
-      @p{This function returns a @racket[remote-vm%] instance not a @racket[remote-place%]}
+      @p{This function returns a @racket[remote-node%] instance not a @racket[remote-place%]}
       @p{Call @racket[(send vm get-first-place)] to obtain the @racket[remote-place%] instance.})) )
 
 @defproc[(spawn-vm-supervise-dynamic-place-at 
@@ -54,7 +54,7 @@ method which handles the events for the node.
            [#:racket-path racketpath string-path? (racket-path)]                                          
            [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
            [#:racloud-launch-path racloudpath string-path? (->string racloud-launch-path)]                                       
-           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place?]{
 Spawns a new remote vm node at @racket[hostname] with one compute instance place.
 @|spawn-vm-note|
 }
@@ -68,7 +68,7 @@ Spawns a new remote vm node at @racket[hostname] with one compute instance place
            [#:racket-path racketpath string-path? (racket-path)]                                          
            [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
            [#:racloud-launch-path racloudpath string-path? (->string racloud-launchpath)]                                       
-           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place%?]{
 Spawns a new remote vm node at @racket[hostname] with one compute instance place.
 @|spawn-vm-note|
 }
@@ -78,14 +78,14 @@ Spawns a new remote vm node at @racket[hostname] with one compute instance place
            [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]                      
            [#:racket-path racketpath string-path? (racket-path)]                                          
            [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
-           [#:racloud-launch-path racloudpath string-path? (->string racloud-launchpath)]) remote-vm%?]{
-Spawns a new remote vm node at @racket[hostname] and returns a @racket[remote-vm%] handle.
+           [#:racloud-launch-path racloudpath string-path? (->string racloud-launchpath)]) remote-node%?]{
+Spawns a new remote vm node at @racket[hostname] and returns a @racket[remote-node%] handle.
 }
 
 @defproc[(supervise-process-at 
            [hostname string?] 
            [commandline-argument string?] ...+
-           [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]) remote-process-supervisor%?]{
+           [#:listen-port port non-negative-integer? DEFAULT-ROUTER-PORT]) remote-process%?]{
 Spawns an attached external process at host @racket[hostname].
 }
 
@@ -94,7 +94,7 @@ Spawns an attached external process at host @racket[hostname].
            [place-name symbol?]
            [compute-instance-module-path module-path?]
            [compute-instance-place-function-name symbol?]
-           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place%?]{
 Creates a new place on the @racket[remote-vm] by dynamic-place invoking @racket[compute-instance-place-function-name]
 from the module @racket[compute-instance-module-path].
 }
@@ -104,7 +104,7 @@ from the module @racket[compute-instance-module-path].
            [place-name symbol?]
            [compute-instance-module-path module-path?]
            [compute-instance-thunk-function-name symbol?]
-           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place-supervisor%?]{
+           [#:restart-on-exit restart-on-exit boolean? #f]) remote-place%?]{
 Creates a new place on the @racket[remote-vm] by executing the thunk @racket[compute-instance-place-function-name]
 from the module @racket[compute-instance-module-path].
 }
@@ -117,7 +117,7 @@ Executes the body expressions every @racket[seconds].
 Executes the body expressions after a delay of @racket[seconds] from the start of the event loop.
 }
 
-@defproc[(connect-to-named-place [vm remote-vm%?] [name symbol?]) remote-connection%?]{
+@defproc[(connect-to-named-place [vm remote-node%?] [name symbol?]) remote-connection%?]{
 Connects to a remote vm @racket[vm] named @racket[name] and returns a @racket[remote-connection%] object.
 }
 
@@ -129,11 +129,11 @@ Connects to a remote vm @racket[vm] named @racket[name] and returns a @racket[re
   (defmethod (get-pid) exact-positive-integer?) ]{
 
 @defconstructor[([cmdline-list (listof (or/c string? path?))]
-                 [parent remote-vm%? #f]
+                 [parent remote-node%? #f]
                  )]{
 The @racket[cmdline-list] is a list command line arguments of type @racket[string] and/or @racket[path].
 
-The @racket[parent] argument is a @racket[remote-vm%] instance that will be notified when the process dies via
+The @racket[parent] argument is a @racket[remote-node%] instance that will be notified when the process dies via
 a @racket[(send parent process-died this)] call.
 }
 }
@@ -155,12 +155,12 @@ socket-channel @racket[sch] via a @racket[dcgm] message. e.g. @racket[(socket-ch
 }
 }
 
-@defclass[node-controller% object% (event-container<%>)]{
+@defclass[node% object% (event-container<%>)]{
 
-The @racket[node-controller%] instance controls a racloud node. It launches compute places and routes inter-node place messages in the distributed system.  The @racket[master-event-loop] form constructs a @racket[node-controller%] instance under the hood.
+The @racket[node%] instance controls a racloud node. It launches compute places and routes inter-node place messages in the distributed system.  The @racket[master-event-loop] form constructs a @racket[node%] instance under the hood.
 
 @defconstructor[([listen-port tcp-llisten-port? #f])]{
- Constructs a @racket[node-controller%] that will listen on @racket[listen-port] for inter-node connections.}
+ Constructs a @racket[node%] that will listen on @racket[listen-port] for inter-node connections.}
 
 @defmethod[(sync-events) void?]{
  Starts the never ending event loop for this racloud node.
@@ -188,15 +188,15 @@ to be explorted by the module @racket[place-module-path].  Executing the thunk i
       @p{The @racket[#:restart-on-exit] boolean argument instructs the remote-place% instance to respawn the place on the remote node should it exit or terminate at any time.  This boolean needs to be expanded to a restart criteria object in the future.})))
 
 
-@defclass[remote-vm% object% (event-container<%>)]{
+@defclass[remote-node% object% (event-container<%>)]{
 
-  The @racket[node-controller%] instance controls a racloud node. It launches
+  The @racket[node%] instance controls a racloud node. It launches
   compute places and routes inter-node place messages in the distributed system.
   This is the remote api to a racloud node that is returned by @racket[spawn-remote-racket-vm], 
   @racket[spawn-vm-supervise-dynamic-place-at], and @racket[spawn-vm-supervise-place-thunk-at].
 
   @defconstructor[([listen-port tcp-llisten-port? #f])]{
-   Constructs a @racket[node-controller%] that will listen on @racket[listen-port] for inter-node connections.}
+   Constructs a @racket[node%] that will listen on @racket[listen-port] for inter-node connections.}
 
   @defmethod[(get-first-place) remote-place%?]{
     Returns the @racket[remote-place%] instance first created on the remote node.
@@ -210,14 +210,14 @@ to be explorted by the module @racket[place-module-path].  Executing the thunk i
                [place-exec list?]
                [#:restart-on-exit restart-on-exit boolean? #f]
                [#:one-sided-place one-sided-place boolean? #f]) remote-place%?]{
-    Launches a place on the remote node represented by this @racket[remote-vm%] instance.
+    Launches a place on the remote node represented by this @racket[remote-node%] instance.
     @|place-exec-note|
     @|one-sided-note|
     @|restart-on-exit-note|
   }
 
   @defmethod[(remote-connect [name string?]) remote-connection%]{
-    Connects to a named place on the remote node represented by this @racket[remote-vm%] instance.
+    Connects to a named place on the remote node represented by this @racket[remote-node%] instance.
   }
 
   @defmethod[(send-exit) void?]{
@@ -229,7 +229,7 @@ to be explorted by the module @racket[place-module-path].  Executing the thunk i
 
 The @racket[remote-place%] instance provides a remote api to a place running on a remote racloud node. It launches a compute places and routes inter-node place messages to the remote place.
 
-@defconstructor[([vm remote-vm%?]
+@defconstructor[([vm remote-node%?]
                  [place-exec list?]
                  [restart-on-exit #f]
                  [one-sided-place #f]
@@ -248,11 +248,11 @@ The @racket[remote-place%] instance provides a remote api to a place running on 
  The @racket[setup/distributed-docs] uses this handle job completion messages.
 }
 }
-@defclass[supervised-place% object% (event-container<%>)]{
+@defclass[place% object% (event-container<%>)]{
 
-The @racket[supervised-place%] instance represents a place launched on a racloud node at that node. It launches a compute places and routes inter-node place messages to the place.
+The @racket[place%] instance represents a place launched on a racloud node at that node. It launches a compute places and routes inter-node place messages to the place.
 
-@defconstructor[([vm remote-vm%?]
+@defconstructor[([vm remote-node%?]
                  [place-exec list?]
                  [ch-id exact-positive-integer?]
                  [sc socket-channel?]
@@ -265,11 +265,11 @@ The @racket[supervised-place%] instance represents a place launched on a racloud
 }
 
 
-@defclass[supervised-connection% object% (event-container<%>)]{
+@defclass[connection% object% (event-container<%>)]{
 
-The @racket[supervised-connection%] instance represents a connection to a named-place instance running on the current node. It routes inter-node place messages to the named place.
+The @racket[connection%] instance represents a connection to a named-place instance running on the current node. It routes inter-node place messages to the named place.
 
-@defconstructor[([vm remote-vm%?]
+@defconstructor[([vm remote-node%?]
                  [name string?]
                  [ch-id exact-positive-integer?]
                  [sc socket-channel?])]{

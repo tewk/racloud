@@ -1,9 +1,9 @@
 #lang scribble/manual
-@(require scribble/eval)
-@(require racket/contract)
-@(require (for-label "../racloud.rkt"))
-@(require scriblib/figure)
-@(require racket/port)
+@(require scribble/eval
+          scriblib/figure
+          racket/port
+          racket/contract
+          (for-label "../racloud.rkt"))
 @(define (codeblockfromfile filename)
    (call-with-input-file 
      filename
