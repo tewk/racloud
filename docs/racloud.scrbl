@@ -276,7 +276,18 @@ The @racket[connection%] instance represents a connection to a named-place insta
  Constructs a @racket[remote-place%] instance.
  @|place-exec-note|
  The @racket[ch-id] and @racket[sc] arguments are internally used to establish routing between the remote node and this named-place.
-}
+
+ }
+ @defmethod[(get-first-place) remote-place%?]{
+   Returns the @racket[remote-place%] object for the first place spawned on this node.
+ }
+ @defmethod[(get-first-place-channel) place-channel?]{
+   Returns the communication channel for the first place spawned on this node.
+ }
+ @defmethod[(wait-for-die) void?]{
+   Blocks and waits for the subprocess representing the @racket[remote-node%] to exit.
+ }
+
 }
 
 @defclass[respawn-and-fire% object% (event-container<%>)]{
