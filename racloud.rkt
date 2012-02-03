@@ -313,6 +313,7 @@
           #f))
 
       (define/public (get-pid) pid)
+      (define/public (wait-for-die) (subprocess-wait s))
       (define/public (register nes)
         (for/filter/fold/cons nes ([x (list s (list o "OUT") (list e "ERR"))])
           (cond 
@@ -659,6 +660,9 @@
 
       (define/public (send-exit)
         (socket-channel-write-flush sc (dcgm DCGM-TYPE-DIE -1 -1 "DIE")))
+
+      (define/public (wait-for-die)
+        (send sp wait-for-die))
 
       (define/public (register es)
         (let* ([es (if sp (send sp register es) es)]
