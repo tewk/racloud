@@ -574,6 +574,7 @@
       (init-field listen-port)
       (init-field [cmdline-list #f])
       (init-field [sc #f]) ;socket-channel
+      (init-field [restart-on-exit #f])
       (field [sp #f]) ;spawned-process
       (field [id 0])
       (field [remote-places null])
@@ -583,14 +584,17 @@
         id)
 
       (define (add-remote-place rp)
-        (set! remote-places (append remote-places(list rp)))
-        )
-
-      (when (and cmdline-list (not sc))
+        (set! remote-places (append remote-places(list rp))))
+      (define (spawn-node)
         (set! sp (new spawned-process% [cmdline-list cmdline-list] [parent this])))
-      (unless sc
+      (define (setup-socket-channel)
         (define-values (in out) (tcp-connect/retry host-name listen-port))
         (set! sc (socket-channel in out null)))
+
+      (when (and cmdline-list (not sc))
+        (spawn-node))
+      (unless sc
+        (setup-socket-channel))
 
       (define (find-place-by-sc-id scid)
         (for/fold ([r #f]) ([rp remote-places])
@@ -625,7 +629,19 @@
       (define/public (get-log-prefix) (format "PLACE ~a:~a" host-name listen-port))
       (define/public (process-died child) 
         (printf "Remote VM pid ~a ~a:~a died \n" (send sp get-pid) host-name listen-port)
-        (set! sp #f))
+        (set! sp #f)
+        (cond
+          [restart-on-exit
+            (cond 
+              [cmdline-list
+                (spawn-node)
+                (setup-socket-channel)]
+              [else
+                (printf "No restart cmdline arguments for ~a\n" 
+                        (get-log-prefix))])]
+          [else
+            (printf "No restart condition for ~a\n" 
+                    (get-log-prefix))]))
 
       (define/public (get-first-place)
         (car remote-places))

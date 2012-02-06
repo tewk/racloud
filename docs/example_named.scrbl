@@ -51,30 +51,37 @@ suitiable for invocation by @racket[supervise-named-place-thunk-at].
 
 
 
-The @racket[define-named-remote-server] form takes an identifier and a list of
-custom expressions as its arguments.  From the identifier a place-thunk
-function is created by prepending the @tt{make-} prefix.  In this case
-@racket[make-tuple-server].  This is the compute-instance-place-function-name
-given to the @racket[supervise-named-place-thunk-at] form above. The
-@racket[define-state] custom form translates into a simple @racket[define]
-form, which is closed over by the @racket[define-rpc] forms.
+The @racket[define-named-remote-server] form takes an identifier and a
+list of custom expressions as its arguments.  From the identifier a
+place-thunk function is created by prepending the @tt{make-} prefix.
+In this case @racket[make-tuple-server].  The
+@racket[make-tuple-server] identifier is the
+@racket{compute-instance-place-function-name} given to the
+@racket[supervise-named-place-thunk-at] form above. The
+@racket[define-state] custom form translates into a simple
+@racket[define] form, which is closed over by @racket[define-rpc]
+forms.
 
-The @racket[define-rpc] form is expanded into two parts. The first part is the
-client that calls the rpc function. The client function name is formed by
-concatenating the @racket[define-named-remote-server] identifier
-@tt{tuple-server} with the RPC function name @tt{set} to form
-@racket[tuple-server-set]. The RPC client functions take a destination argument
-with is a remote-place-descriptor and then the RPC function arguments. The RPC
-client function sends the RPC function name, @racket[set], and the RPC
-arguments to the destination by calling an internal function
-@racket[named-place-channel-put]. The RPC client then calls
-@racket[named-place-channel-get] to wait for the RPC response.
+The @racket[define-rpc] form is expanded into two parts. The first
+part is the client stub that calls the rpc function. The client
+function name is formed by concatenating the
+@racket[define-named-remote-server] identifier, @tt{tuple-server}.
+with the RPC function name @tt{set} to form @racket[tuple-server-set].
+The RPC client functions take a destination argument which is a
+@racket[remote-connection%] descriptor and then the RPC function
+arguments. The RPC client function sends the RPC function name,
+@racket[set], and the RPC arguments to the destination by calling an
+internal function @racket[named-place-channel-put]. The RPC client
+then calls @racket[named-place-channel-get] to wait for the RPC
+response.
 
-The second expansion part of @racket[define-rpc] is the server side of the RPC
-call which is a match clause inside the server which is created in the
-@racket[make-tuple-server] function.  Here the set match clause matches on @racket['set]
-messages, executes the RPC call with the communicated arguments, and send the result back to 
-the requester.
+The second expansion part of @racket[define-rpc] is the server
+implementation of the RPC call.  The server is implemented by a match
+expression inside the @racket[make-tuple-server] function.  The match
+clause for @racket[tuple-server-set] matches on messages beginning
+with the @racket['set] symbol. The server executes the RPC call with
+the communicated arguments and sends the result back to the RPC
+client.
 
 @figure["define-named-remote-server-expansion" "Expansion of define-named-remote-server"]{
 @codeblock{

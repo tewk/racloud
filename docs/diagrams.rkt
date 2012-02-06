@@ -1,7 +1,11 @@
 #lang racket
-(require slideshow
-         racket/draw)
+(require slideshow/pict
+         ;slideshow/base
+         racket/draw
+         )
 
+(define (t str)
+  (text str "swiss" 32))
 (define (t/2 txt) (scale/improve-new-text (t txt) 1/2))
 (define (t/3 txt) (scale/improve-new-text (t txt) 1/3))
 
@@ -195,3 +199,5 @@
 ;(client-server-grid)
 ;(pict->svg/png (big-picture) "bigpicture")
 ;big-picture 
+;(displayln (current-font-size))
+;(displayln (current-main-font))

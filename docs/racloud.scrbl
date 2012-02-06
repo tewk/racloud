@@ -30,20 +30,21 @@ to remote hosts using public key authentication.}
 
 As Racloud matures some of the last three assumptions will be eliminated.
 
-Design Pattern 2: (examples robotics3)
-
-@defproc[(master-event-loop [ec events-container?] ...+) void?]{
-Waits for an one of many events to become ready.  Endless loop.
-The @racket[master-event-loop] procedure constructs a @racket[node%] instance and adds all the declared
-@racket[events-container<%>]s to the @racket[node%] and then calls the never ending loop @racket[sync-events]
-method which handles the events for the node.
+@defproc[(master-event-loop [ec events-container?] ...+) void?]{ Waits
+for an one of many events to become ready in an endless loop.  The
+@racket[master-event-loop] procedure constructs a @racket[node%]
+instance to serve as the message router for then node. The
+@racket[master-event-loop] procedure then adds all the declared
+@racket[events-container<%>]s to the @racket[node%] and finally calls
+the never ending loop @racket[sync-events] method, which handles the
+events for the node.
 }
 @(define (p . l) (decode-paragraph l))
 @(define spawn-vm-note
     (make-splice                                                                                              
      (list                                                                                                    
-      @p{This function returns a @racket[remote-node%] instance not a @racket[remote-place%]}
-      @p{Call @racket[(send vm get-first-place)] to obtain the @racket[remote-place%] instance.})) )
+      @p{This function returns a @racket[remote-node%] instance not a @racket[remote-place%]
+      Call @racket[(send vm get-first-place)] to obtain the @racket[remote-place%] instance.})) )
 
 @defproc[(spawn-vm-supervise-dynamic-place-at 
            [hostname string?] 
@@ -55,10 +56,19 @@ method which handles the events for the node.
            [#:ssh-bin-path sshpath string-path? (ssh-bin-path)]                                           
            [#:racloud-launch-path racloudpath string-path? (->string racloud-launch-path)]                                       
            [#:restart-on-exit restart-on-exit boolean? #f]) remote-place?]{
-Spawns a new remote vm node at @racket[hostname] with one compute instance place.
+Spawns a new remote vm node at @racket[hostname] with one compute instance place specified by 
+the @racket[compute-instance-module-path] and @racket[compute-instance-place-function-name]
+parameters. This procedure construcst the new remote-place by calling 
+@racket[(dynamic-place compute-instance-module-path compute-instance-place-function-name)].
 @|spawn-vm-note|
 }
 
+@(define place-thunk-function
+    (make-splice                                                                                              
+     (list                                                                                                    
+      @p{
+The @racket[compute-instance-thunk-function-name] procedure is responsible for creating the place and returning the newly constructed the place descriptor.  The @racket[compute-instance-thunk-function-name] procedure should accomplish this by calling either @racket[dynamic-place] or @racket[place] inside the thunk.
+      })) )
 @defproc[(spawn-vm-supervise-place-thunk-at 
            [hostname string?] 
            [compute-instance-module-path module-path?]
@@ -70,6 +80,13 @@ Spawns a new remote vm node at @racket[hostname] with one compute instance place
            [#:racloud-launch-path racloudpath string-path? (->string racloud-launchpath)]                                       
            [#:restart-on-exit restart-on-exit boolean? #f]) remote-place%?]{
 Spawns a new remote vm node at @racket[hostname] with one compute instance place.
+the @racket[compute-instance-module-path] and @racket[compute-instance-thunk-function-name]
+parameters. This procedure construcst the new remote-place by calling dynamically requiring the @racket[compute-instance-thunk-function-name] 
+and invoking the @racket[compute-instance-thunk-function-name].  
+
+@racket[((dynamic-require compute-instance-module-path compute-instance-thunk-function-name))]
+
+@|place-thunk-function|
 @|spawn-vm-note|
 }
 
@@ -95,7 +112,7 @@ Spawns an attached external process at host @racket[hostname].
            [compute-instance-module-path module-path?]
            [compute-instance-place-function-name symbol?]
            [#:restart-on-exit restart-on-exit boolean? #f]) remote-place%?]{
-Creates a new place on the @racket[remote-vm] by dynamic-place invoking @racket[compute-instance-place-function-name]
+Creates a new place on the @racket[remote-vm] by using @racket[dynamic-place] to invoke @racket[compute-instance-place-function-name]
 from the module @racket[compute-instance-module-path].
 }
 
@@ -105,25 +122,38 @@ from the module @racket[compute-instance-module-path].
            [compute-instance-module-path module-path?]
            [compute-instance-thunk-function-name symbol?]
            [#:restart-on-exit restart-on-exit boolean? #f]) remote-place%?]{
-Creates a new place on the @racket[remote-vm] by executing the thunk @racket[compute-instance-place-function-name]
-from the module @racket[compute-instance-module-path].
+Creates a new place on the @racket[remote-vm] by executing the thunk @racket[compute-instance-thunk-function-name]
+from the module @racket[compute-instance-module-path].   
+
+@|place-thunk-function|
 }
 
 @defform[(every-seconds seconds body ....)]{
-Executes the body expressions every @racket[seconds].
+Returns a @racket[respawn-and-fire%] instance that should be supplied to a @racket[master-event-loop].
+The @racket[respawn-and-fire%] instance executes the body expressions every @racket[seconds].
 }
 
 @defform[(after-seconds seconds body ....)]{
+Returns a @racket[after-seconds%] instance that should be supplied to a @racket[master-event-loop].
 Executes the body expressions after a delay of @racket[seconds] from the start of the event loop.
 }
 
 @defproc[(connect-to-named-place [vm remote-node%?] [name symbol?]) remote-connection%?]{
-Connects to a remote vm @racket[vm] named @racket[name] and returns a @racket[remote-connection%] object.
+Connects to a named place on the @racket[vm] named @racket[name] and returns a @racket[remote-connection%] object.
 }
 
-@definterface[event-container<%> ()
-  (defmethod (register [events (listof events?)]) (listof events?))]{
+@definterface[event-container<%> ()]{
+  All objects that are supplied to the @racket[master-event-loop] must implement the @racket[event-container<%>] interface.
+  The @racket[master-event-loop] calls the @racket[register] method on each supplied @racket[event-container<%>] to abtain a list of events the event loop should wait for.
+
+  @defmethod[(register [events (listof events?)]) (listof events?)]{
+    Returns the list of events inside the @racket[event-container<%>] that should be waited on by the @racket[master-event-loop].
   }
+
+The following classes all implement @racket[event-container<%>] and can be supplied to a @racket[master-event-loop]: @racket[spawned-process%], @racket[place-socket-bridge%], @racket[node%], @racket[remote-node%], @racket[remote-place%], @racket[place%]
+@racket[connection%], @racket[respawn-and-fire%], and @racket[after-seconds%].
+
+}
 
 @defclass[spawned-process% object% (event-container<%>)
   (defmethod (get-pid) exact-positive-integer?) ]{
@@ -157,7 +187,7 @@ socket-channel @racket[sch] via a @racket[dcgm] message. e.g. @racket[(socket-ch
 
 @defclass[node% object% (event-container<%>)]{
 
-The @racket[node%] instance controls a racloud node. It launches compute places and routes inter-node place messages in the distributed system.  The @racket[master-event-loop] form constructs a @racket[node%] instance under the hood.
+The @racket[node%] instance controls a racloud node. It launches compute places and routes inter-node place messages in the distributed system.  The @racket[master-event-loop] form constructs a @racket[node%] instance under the hood.  Newly spawned nodes also have a  @racket[node%] instance in their initial place that serves as the node's message router.
 
 @defconstructor[([listen-port tcp-llisten-port? #f])]{
  Constructs a @racket[node%] that will listen on @racket[listen-port] for inter-node connections.}
@@ -173,8 +203,8 @@ The @racket[node%] instance controls a racloud node. It launches compute places 
       @p{The @racket[place-exec] argument describes how the remote place should be launched.}
       @itemize[@item{@racket[(list 'place place-module-path place-thunk)]}
                @item{@racket[(list 'dynamic-place place-module-path place-func)]}]
-      @p{The difference between these two launching methods is that the @racket['place] versio of @racket[place-exec] expects a thunk, zero argument function, 
-to be explorted by the module @racket[place-module-path].  Executing the thunk is expected to create a new place and return a place descriptor to the newly created place. The @racket['dynamic-place] version of @racket[place-exec] expects place-func to be a function taking a single argument, the initial channel argument, and calls @racket[dynamic-place] on behalf of the user and creates the new place from the @racket[place-module-path] and @racket[place-func].}
+      @p{The difference between these two launching methods is that the @racket['place] version of @racket[place-exec] expects a thunk, zero argument function, 
+to be exported by the module @racket[place-module-path].  Executing the thunk is expected to create a new place and return a place descriptor to the newly created place. The @racket['dynamic-place] version of @racket[place-exec] expects place-func to be a function taking a single argument, the initial channel argument, and calls @racket[dynamic-place] on behalf of the user and creates the new place from the @racket[place-module-path] and @racket[place-func].}
 )))
 
 @(define one-sided-note
@@ -192,17 +222,19 @@ to be explorted by the module @racket[place-module-path].  Executing the thunk i
 
   The @racket[node%] instance controls a racloud node. It launches
   compute places and routes inter-node place messages in the distributed system.
-  This is the remote api to a racloud node that is returned by @racket[spawn-remote-racket-vm], 
+  This is the remote api to a racloud node. Instances of @racket[remote-node%] are returned by @racket[spawn-remote-racket-vm], 
   @racket[spawn-vm-supervise-dynamic-place-at], and @racket[spawn-vm-supervise-place-thunk-at].
 
   @defconstructor[([listen-port tcp-llisten-port? #f])]{
    Constructs a @racket[node%] that will listen on @racket[listen-port] for inter-node connections.}
 
   @defmethod[(get-first-place) remote-place%?]{
-    Returns the @racket[remote-place%] instance first created on the remote node.
+    Returns the @racket[remote-place%] object instance for the first place spawned on this node.
   }
-
-  @defmethod[(get-log-prefox) string?]{
+  @defmethod[(get-first-place-channel) place-channel?]{
+    Returns the communication channel for the first place spawned on this node.
+  }
+  @defmethod[(get-log-prefix) string?]{
     Returns @racket[(format "PLACE ~a:~a" host-name listen-port)]
   }
 
@@ -221,7 +253,7 @@ to be explorted by the module @racket[place-module-path].  Executing the thunk i
   }
 
   @defmethod[(send-exit) void?]{
-    Sends a message instructing the remote node to exit immediately
+    Sends a message instructing the remote node represented by this @racket[remote-node%] instance to exit immediately
   }
 }
                
@@ -245,14 +277,14 @@ The @racket[remote-place%] instance provides a remote api to a place running on 
 @defmethod[(set-on-channel/2! [callback (-> channel msg void?)]) void?]{
  Installs a handler function that handles messages from the remote place.
  @;The function body can be written in direct style since @racket
- The @racket[setup/distributed-docs] uses this handle job completion messages.
+ The @racket[setup/distributed-docs] module uses this callback to handle job completion messages.
 }
 }
 @defclass[place% object% (event-container<%>)]{
 
 The @racket[place%] instance represents a place launched on a racloud node at that node. It launches a compute places and routes inter-node place messages to the place.
 
-@defconstructor[([vm remote-node%?]
+@defconstructor[([vm remote-place%?]
                  [place-exec list?]
                  [ch-id exact-positive-integer?]
                  [sc socket-channel?]
@@ -262,6 +294,10 @@ The @racket[place%] instance represents a place launched on a racloud node at th
  The @racket[ch-id] and @racket[sc] arguments are internally used to establish routing between the remote node spawning this place and the place itself.
  The @racket[on-place-dead] callback handles the event when the newly spawned place terminates.
 }
+ @defmethod[(wait-for-die) void?]{
+   Blocks and waits for the subprocess representing the @racket[remote-node%] to exit.
+ }
+
 }
 
 
@@ -278,16 +314,6 @@ The @racket[connection%] instance represents a connection to a named-place insta
  The @racket[ch-id] and @racket[sc] arguments are internally used to establish routing between the remote node and this named-place.
 
  }
- @defmethod[(get-first-place) remote-place%?]{
-   Returns the @racket[remote-place%] object for the first place spawned on this node.
- }
- @defmethod[(get-first-place-channel) place-channel?]{
-   Returns the communication channel for the first place spawned on this node.
- }
- @defmethod[(wait-for-die) void?]{
-   Blocks and waits for the subprocess representing the @racket[remote-node%] to exit.
- }
-
 }
 
 @defclass[respawn-and-fire% object% (event-container<%>)]{
@@ -300,7 +326,7 @@ The @racket[respawn-and-fire%] instance represents a thunk that should execute e
 }
 }
 
-@defclass[after-second% object% (event-container<%>)]{
+@defclass[after-seconds% object% (event-container<%>)]{
 
 The @racket[after-seconds%] instance represents a thunk that should execute after @racket[n] seconds.
 
@@ -309,8 +335,6 @@ The @racket[after-seconds%] instance represents a thunk that should execute afte
  Constructs an @racket[after-seconds%] instance that when placed inside a @racket[master-event-loop] construct causes the supplied thunk to execute after @racket[n] seconds.
 }
 }
-
-
 
 
 @defproc[(ssh-bin-path) string?]{

@@ -5,4 +5,6 @@ docs/*.pdf
 docs/*.png
 docs/*.svg
 docs/*.rkt~
+compiled
+docs/compiled
 
