@@ -128,6 +128,12 @@ from the module @racket[compute-instance-module-path].
 @|place-thunk-function|
 }
 
+@defform[(restart-every [seconds (and/c real? nonegative?)]
+                        [#:retry retry (or/c nonegative-integer? #f) #f])]{
+
+Returns a @racket[after-seconds%] instance that should be supplied to a @racket[#:restart-on-exit] argument.
+}
+
 @defform[(every-seconds seconds body ....)]{
 Returns a @racket[respawn-and-fire%] instance that should be supplied to a @racket[master-event-loop].
 The @racket[respawn-and-fire%] instance executes the body expressions every @racket[seconds].
@@ -225,8 +231,13 @@ to be exported by the module @racket[place-module-path].  Executing the thunk is
   This is the remote api to a racloud node. Instances of @racket[remote-node%] are returned by @racket[spawn-remote-racket-vm], 
   @racket[spawn-vm-supervise-dynamic-place-at], and @racket[spawn-vm-supervise-place-thunk-at].
 
-  @defconstructor[([listen-port tcp-llisten-port? #f])]{
-   Constructs a @racket[node%] that will listen on @racket[listen-port] for inter-node connections.}
+  @defconstructor[([listen-port tcp-llisten-port? #f]
+                   [restart-on-exit boolean? #f])]{
+   Constructs a @racket[node%] that will listen on @racket[listen-port] for inter-node connections.
+   
+   When set to true the @racket[restart-on-exit] parameter causes the specified node to be restarted when the 
+   ssh session spawning the node dies.
+   }
 
   @defmethod[(get-first-place) remote-place%?]{
     Returns the @racket[remote-place%] object instance for the first place spawned on this node.
@@ -333,6 +344,17 @@ The @racket[after-seconds%] instance represents a thunk that should execute afte
 @defconstructor[([seconds (and/c real? (not/c negative?))]
                  [thunk (-> void?)])]{
  Constructs an @racket[after-seconds%] instance that when placed inside a @racket[master-event-loop] construct causes the supplied thunk to execute after @racket[n] seconds.
+}
+}
+
+@defclass[restarter% after-seconds% (event-container<%>)]{
+
+The @racket[restarter%] instance represents a restart strategy.
+
+@defconstructor[([seconds (and/c real? (not/c negative?))]
+                 [retry (or/c #f nonnegative-integer?) #f])]{
+ Constructs an @racket[restarter%] instance that when supplied to a @racket[#:restart-on-exit] argument, attempts to restart the process every @racket[seconds].  The @racket[retry] argument specifies how many time to attempt to restart the process before giving up.
+If the process stays alive for @racket[(* 2 seconds)] the attempted retries count is reset to @racket[0].
 }
 }
 

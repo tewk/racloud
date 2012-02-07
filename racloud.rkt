@@ -22,6 +22,8 @@
          supervise-process-at
          every-seconds
          after-seconds
+         restart-every
+         after-seconds%
 
          connect-to-named-place
 
@@ -590,6 +592,9 @@
       (define (setup-socket-channel)
         (define-values (in out) (tcp-connect/retry host-name listen-port))
         (set! sc (socket-channel in out null)))
+      (define (restart-node)
+        (spawn-node)
+        (setup-socket-channel))
 
       (when (and cmdline-list (not sc))
         (spawn-node))
@@ -634,8 +639,9 @@
           [restart-on-exit
             (cond 
               [cmdline-list
-                (spawn-node)
-                (setup-socket-channel)]
+                (if (equal? restart-on-exit #t)
+                  (restart-node)
+                  (send restart-on-exit restart restart-node))]
               [else
                 (printf "No restart cmdline arguments for ~a\n" 
                         (get-log-prefix))])]
@@ -684,7 +690,11 @@
         (let* ([es (if sp (send sp register es) es)]
                [es (for/fold ([nes es]) ([rp remote-places])
                              (send rp register nes))]
-               [es (if sc (cons (wrap-evt (socket-channel-in sc) on-socket-event) es) es)])
+               [es (if sc (cons (wrap-evt (socket-channel-in sc) on-socket-event) es) es)]
+               [es (if (and restart-on-exit
+                            (not (equal? restart-on-exit #t)))
+                       (send restart-on-exit register es)
+                       es)])
           es))
 
       (super-new)
@@ -718,6 +728,10 @@
 
       (set! psb (send vm spawn-remote-place place-exec rpc))
 
+      (define (restart-place)
+        (send vm drop-sc-id (send psb get-sc-id))
+        (set! psb (send vm spawn-remote-place place-exec rpc)))
+
       (define/public (stop) (void))
       (define/public (get-channel) pc)
       (define/public (set-on-channel/2! proc) (set! on-channel/2 proc))
@@ -726,8 +740,9 @@
       (define/public (place-died)
         (cond
           [restart-on-exit
-            (send vm drop-sc-id (send psb get-sc-id))
-            (set! psb (send vm spawn-remote-place place-exec rpc))]
+                (if (equal? restart-on-exit #t)
+                  (restart-place)
+                  (send restart-on-exit restart restart-place))]
           [else
             (printf "No restart condition for ~a:~a\n" 
                     (send vm get-log-prefix)
@@ -750,7 +765,11 @@
                                               [else
                                                on-channel-event])) es) 
                        es)]
-               [es (send psb register es)])
+               [es (send psb register es)]
+               [es (if (and restart-on-exit
+                            (not (equal? restart-on-exit #t)))
+                       (send restart-on-exit register es)
+                       es)])
           es))
       (define/public (set-continuation _k) (set! k _k))
 
@@ -919,7 +938,7 @@
       object% (event-container<%>)
       (init-field seconds)
       (init-field thunk)
-      (field [fire-time (+ (current-inexact-milliseconds) (* seconds 1000))])
+      (init-field [fire-time (+ (current-inexact-milliseconds) (* seconds 1000))])
 
       (define/public (register es)
         (if fire-time 
@@ -933,6 +952,33 @@
 
       (super-new)
       )))
+
+(define restarter%
+    (class*
+      after-seconds% (event-container<%>)
+      (inherit-field seconds thunk fire-time)
+      (init-field [retry #f])
+      (super-new [fire-time #f] [thunk #f])
+      (init-field [retry-reset (* 2 seconds)])
+      (field [last-attempt 0])
+      (field [retries 0])
+      (define/public (restart restart-func)
+        (printf "Here I am ~a\n" retry)
+        (cond
+          [(and retry (>= retries retry))
+           (printf "Already retried to restart ~a times\n" retry)]
+          [(> (- (current-inexact-milliseconds) last-attempt) (* seconds 1000))
+           (when (> (- (current-inexact-milliseconds) last-attempt) (* retry-reset 1000))
+             (set! retries 0))
+           (set! last-attempt (current-inexact-milliseconds))
+           (set! retries (+ 1 retries))
+           (set! fire-time #f)
+           (restart-func)]
+          [else
+            (set! thunk (lambda () (restart restart-func)))
+            (set! fire-time (+ (current-inexact-milliseconds) (* seconds 1000)))]))
+      ))
+
 
 (define (startup-config conf conf-idx)
   (start-node-router 
@@ -1112,6 +1158,11 @@
 
 (define (connect-to-named-place vm name)
   (send vm remote-connect name))
+
+(define (restart-every seconds #:retry [retry #f] #:on-fail-email [fail-email-address #f])
+  (new restarter% [seconds seconds] [retry retry]))
+
+
 
 
 ;; Contract: node-config -> (void)

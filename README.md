@@ -7,7 +7,7 @@ Racloud is a distributed system framework for the Racket programming language [h
 
 Run make to generate html and pdf documentation
 
-* [docs/racloud.scrbl](docs/racloud.scrbl)
+* docs/racloud.scrbl
   Racloud API Documentation 
 * docs/example_named.scrbl
   A Racloud distributed system example.

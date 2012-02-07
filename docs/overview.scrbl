@@ -22,13 +22,15 @@ with one initial place, the message router. See
 @figure-ref["node-places"]. Once the node has been configured the
 message router is activated by calling the @racket[master-event-loop]
 function. The message router listens on a TCP port for incoming
-connections from other nodes in the distributed system.  Additional
-compute places can be spawned within the node by sending place-spawn
+connections from other nodes in the distributed system. Compute 
+places can be spawned within the node by sending place-spawn
 request messages to the node's message router.
 
 @figure["node-places" "Racloud Node Places"
 @(centered @(scale @(node-diagram) 0.75))
 ]
+
+@include-section["example_named.scrbl"]
 
 @section{Internal Design}
 Racloud commands that spawn remote nodes and places return controller
