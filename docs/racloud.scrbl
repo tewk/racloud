@@ -9,7 +9,9 @@
 
 
 @(define evaler (make-base-eval))                                                                         
-@(interaction-eval #:eval evaler (require "../racloud.rkt" racket/class)) 
+@(interaction-eval #:eval evaler (require "../racloud.rkt" racket/class 
+                                          "../define-named-remote-server.rkt"
+                                          "../define-remote-server.rkt")) 
 
 @title[#:tag "racloud"]{Racloud}
 
@@ -359,6 +361,69 @@ If the process stays alive for @racket[(* 2 seconds)] the attempted retries coun
 }
 
 
+
+@defform[(define-remote-server name forms ...)]{
+
+Creates a @racket[make-name] function that spawns a place running a instance of the @racket[name]
+remote server.  The server sits in a loop waiting for rpc requests from the @racket[define-rpc] functions
+documented below.
+
+@defform[(define-state id value)]{
+ Expands to a @@racket[define], which is closed over by the @racket[define-rpc] functions
+ to form local state.
+}
+
+@defform[(define-rpc (id args ...) body ...)]{
+ Expands to a client rpc function @tt{name-id} which sends @racket[id] and @racket[args ...] to 
+ the rpc server @racket[rpc-place] and waits for a response.
+ @racket[(define (name-id rpc-place args ...) body)]
+}
+}
+
+@examples[ #:eval evaler
+(define-named-remote-server
+   tuple-server
+
+   (define-state h (make-hash))
+   (define-rpc (set k v)
+     (hash-set! h k v)
+     v)
+   (define-rpc (get k)
+     (hash-ref h k #f)))]
+
+@examples[ #:eval evaler
+(define-remote-server                                                                                         
+  bank                                                                                                        
+                                                                                                              
+  (define-state accounts (make-hash))                                                                         
+  (define-rpc (new-account who)                                                                               
+     (match (hash-has-key? accounts who)                                                                      
+       [#t '(already-exists)]                                                                                 
+       [else                                                                                                  
+         (hash-set! accounts who 0)                                                                           
+         (list 'created who)]))                                                                               
+  (define-rpc (removeM who amount)                                                                            
+     (cond                                                                                                    
+       [(hash-ref accounts who (lambda () #f)) =>                                                             
+          (lambda (balance)                                                                                   
+            (cond [(<= amount balance)                                                                        
+                   (define new-balance (- balance amount))                                                    
+                   (hash-set! accounts who new-balance)                                                       
+                   (list 'ok new-balance)]                                                                    
+                  [else                                                                                       
+                    (list 'insufficient-funds balance)]))]                                                    
+       [else                                                                                                  
+         (list 'invalid-account who)]))                                                                       
+  (define-rpc (add who amount)                                                                                
+    (cond                                                                                                     
+       [(hash-ref accounts who (lambda () #f)) =>                                                             
+          (lambda (balance)                                                                                   
+            (define new-balance (+ balance amount))                                                           
+            (hash-set! accounts who new-balance)                                                              
+            (list 'ok new-balance))]                                                                          
+       [else                                                                                                  
+         (list 'invalid-account who)])))]
+
 @defproc[(ssh-bin-path) string?]{
 Returns the path to the ssh binary on the local system in string form.
 }
@@ -428,3 +493,5 @@ Writes @racket[datum] to @racket[port] and then flushes @racket[port].
 @examples[ #:eval evaler
 (write-flush "Hello Mom" (current-output-port))
 ]
+
+@(close-eval evaler) 
