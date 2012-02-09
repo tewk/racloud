@@ -41,7 +41,7 @@
       (define dch (dcg-recv c))
       (printf "dch ~a\n" dch)
       (displayln (dchannel-get dch))]))
-(define ssh-path (ssh-bin-path))
+(define ssh-path (path->string (ssh-bin-path)))
 (define racketpath (path->string (racket-path)))
 (define racloudpath (racloud-path))
 (define echopath (get-current-module-path))

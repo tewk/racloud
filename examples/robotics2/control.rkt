@@ -31,7 +31,7 @@
     (sleep 5)
     (loop (add1 a))))
 
-(define ssh-path (ssh-bin-path))
+(define ssh-path (path->string (ssh-bin-path)))
 (define racketpath (path->string (racket-path)))
 (define racloudpath (racloud-path))
 (define controlpath (get-current-module-path))

@@ -132,6 +132,7 @@
 
 
 (define (write-flush msg [p (current-output-port)])
+  ;(printf "WRITING ~v\n" msg)
   (write msg p)
   (flush-output p))
 
@@ -158,20 +159,6 @@
 
 ;node configuration
 (struct node-config (node-name node-port proc-count ssh-path racket-path racloud-path mod-path func-name conf-path conf-name) #:prefab)
-
-;socket channel
-(struct socket-channel (in out [subchannels #:mutable]))
-(define (socket-channel-add-subchannel s ch-id ch)
-  (set-socket-channel-subchannels! s (append (socket-channel-subchannels s) (list (cons ch-id ch)))))
-(define (socket-channel-lookup-subchannel s ch-id)
-  (cdr (assoc ch-id (socket-channel-subchannels s))))
-(define (socket-channel-write-flush s x)
-  (write-flush x (socket-channel-out s)))
-(define (socket-channel-remove-subchannel sc scid)
-  (set-socket-channel-subchannels! sc (filter-map 
-                                        (lambda (x) (and (not (= (car x) scid)) x)) 
-                                        (socket-channel-subchannels sc))))
-
 ;distributed communication group
 (struct dcg (ch id n))
 ;distributed communication group message
@@ -220,7 +207,7 @@
   (dcg-send-type c DCGM-TYPE-NEW-DCHANNEL dest (dchannel e2))
   (dchannel e1))
 
-;; Contract: start-node-router : VectorOf[ (or/c place-channel socket-channel)] -> (void)
+;; Contract: start-node-router : VectorOf[ (or/c place-channel socket-connection)] -> (void)
 ;; Purpose: Forward messages between channels and build new point-to-point subchannels
 ;; Example:
 (define (dcg-spawn-remote-dplace c hostname modpath funcname #:listen-port [listen-port 6432])
@@ -236,7 +223,7 @@
 
 (define (total-node-count conf) (reduce-sum conf item (node-config-proc-count item)))
 
-;; Contract: start-node-router : VectorOf[ (or/c place-channel socket-channel)] -> (void)
+;; Contract: start-node-router : VectorOf[ (or/c place-channel socket-connection)] -> (void)
 ;;
 ;; Purpose: Forward messages between channels and build new point-to-point subchannels
 ;;
@@ -332,7 +319,7 @@
     (class* 
       object% (event-container<%>)
       (init-field pch 
-                  sch 
+                  sch
                   id)
       (define/public (register nes)
         (cons 
@@ -345,12 +332,12 @@
       (define/public (get-sc-id) id)
       (define/public (get-msg)
         (let loop ()
-          (define msg (read (socket-channel-in sch)))
+          (define msg (send sch read-message))
           (if (= (dcgm-type msg) DCGM-DPLACE-DIED)
             (loop)
           (dcgm-msg msg))))
       (define/public (put-msg msg)
-        (socket-channel-write-flush sch (dcgm DCGM-TYPE-INTER-DCHANNEL id id msg)))
+        (sconn-write-flush sch (dcgm DCGM-TYPE-INTER-DCHANNEL id id msg)))
       (super-new)
   )))
 
@@ -390,11 +377,11 @@
           [(dcgm 2 #;(== DCGM-TYPE-NEW-DCHANNEL) src dest pch)
             (define d (vector-ref chan-vec dest))
             (cond
-              [(socket-channel? d)
+              [(is-a? d socket-connection%)
                (define ch-id (nextid))
-               (socket-channel-add-subchannel d ch-id pch)
+               (sconn-add-subchannel d ch-id pch)
                (add-place-channel-socket-bridge pch d ch-id)
-               (socket-channel-write-flush d (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL src dest ch-id))]
+               (sconn-write-flush d (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL src dest ch-id))]
               [(or (place-channel? d) (place? d))
                (place-channel-put d m)])]
           [(dcgm 3 #;(== DCGM-TYPE-NEW-INTER-DCHANNEL) -1 (and place-exec (list-rest type rest)) ch-id)
@@ -410,7 +397,7 @@
                   (add-sub-ec nc)]
                  
                 [else
-                  (socket-channel-write-flush src-channel (dcgm DCGM-TYPE-INTER-DCHANNEL ch-id ch-id 
+                  (sconn-write-flush src-channel (dcgm DCGM-TYPE-INTER-DCHANNEL ch-id ch-id 
                                                        (format "ERROR: name not found ~a" name)))])]
 
              [else
@@ -425,11 +412,11 @@
             (define s src-channel)
             (define d (vector-ref chan-vec dest))
             (define-values (pch1 pch2) (place-channel))
-            (socket-channel-add-subchannel s ch-id pch1)
+            (sconn-add-subchannel s ch-id pch1)
             (add-place-channel-socket-bridge pch1 s ch-id)
             (place-channel-put d (dcgm DCGM-TYPE-NEW-DCHANNEL src dest pch2))]
           [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)
-            (define pch (socket-channel-lookup-subchannel src-channel ch-id))                                  
+            (define pch (sconn-lookup-subchannel src-channel ch-id))                                  
             (cond 
               [(place-channel? pch)
                 ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
@@ -454,8 +441,8 @@
           [(dcgm mtype srcs dest msg)
             (define d (vector-ref chan-vec dest))
             (cond
-              [(socket-channel? d)
-                (write-flush m (socket-channel-out d))]
+              [(is-a? d socket-connection%)
+                (sconn-write-flush d m)]
               [(or (place-channel? d) (place? d))
                 (place-channel-put d m)])]
           [(? eof-object?)
@@ -484,11 +471,8 @@
               (for/fold ([n nes]) ([x (in-vector chan-vec)])
                 (cons
                   (cond
-                    [(socket-channel? x)
-                     (define in (socket-channel-in x))
-                     (wrap-evt in (lambda (e) 
-                                      ;(printf "VECTOR SOCKET MESSAGE ~a\n" e)
-                                      (forward-mesg (read in) x)))]
+                    [(is-a? x socket-connection%)
+                     (sconn-get-forward-event x forward-mesg)]
                     [(or (place-channel? x) (place? x))
                      (wrap-evt x (lambda (e) 
                                      ;(printf "VECTOR PLACE MESSAGE ~a\n" e)
@@ -502,7 +486,7 @@
                   (define-values (in out) (tcp-accept listen-port))
                   (define-values (lh lp rh rp) (tcp-addresses in #t))
                   (printf "INCOMING CONNECTION ~a:~a <- ~a:~a\n" lh lp rh rp)
-                  (define sp (socket-channel in out null))
+                  (define sp (new socket-connection% [in in] [out out]))
                   (add-socket-port sp)))
                 nes)
               nes)]
@@ -511,11 +495,8 @@
               (for/fold ([n nes]) ([x socket-ports])
                 (cons
                   (cond
-                    [(socket-channel? x)
-                     (define in (socket-channel-in x))
-                     (wrap-evt in (lambda (e) 
-                                      ;(printf "SOCKET-PORT SOCKET MESSAGE ~a\n" e)
-                                      (forward-mesg (read in) x)))]
+                    [(is-a? x socket-connection%)
+                     (sconn-get-forward-event x forward-mesg)]
                     [(or (place-channel? x) (place? x))
                      (wrap-evt x (lambda (e) 
                                      ;(printf "SOCKET-PORT PLACE MESSAGE ~a\n" e)
@@ -552,19 +533,87 @@
   )))
 
 
-; currently not used
+;socket channel
+(define (sconn-add-subchannel s ch-id ch) (send s add-subchannel ch-id ch))
+(define (sconn-lookup-subchannel s ch-id) (send s lookup-subchannel ch-id))
+(define (sconn-write-flush s x) (send s _write-flush x))
+(define (sconn-remove-subchannel s scid) (send s remove-subchannel scid))
+(define (sconn-get-forward-event s forwarder) (send s get-forward-event forwarder))
+
 (define socket-connection%
   (backlink
     (class* object% (event-container<%>)
-      (init-field [in #f]
+      (init-field [host #f]
+                  [port #f]
+                  [retry-times 20]
+                  [delay 1]
+                  [background-connect #t]
+                  [in #f]
                   [out #f])
+      (field [subchannels null]
+             [connecting #f]
+             [ch #f])
+
       (define (forward-mesg x) (void))
+
+      (define (tcp-connect/retry rname rport #:times [times 10] #:delay [delay 1])
+        (let loop ([t 0])
+          (with-handlers ([exn? (lambda (e) 
+                        (cond [(t . < . times) 
+                               (printf "waiting ~a sec to retry connection to ~a:~a\n" delay rname rport)
+                               (sleep delay) 
+                               (loop (add1 t))]
+                              [else (raise e)]))])
+            (tcp-connect rname (->number rport)))))
+
+      (define (ensure-connected)
+        ;(printf "Waiting on connecting to ~a ~a\n" host port)
+        (when connecting
+          (match (channel-get ch)
+            [(list _in _out)
+             (set! in _in)
+             (set! out _out)])))
+
+      (define/public (add-subchannel id pch)
+        (set! subchannels (append subchannels (list (cons id pch)))))
+      (define/public (lookup-subchannel id) (cdr (assoc id subchannels)))
+      (define/public (_write-flush x) 
+        (when (equal? out #f) (ensure-connected))
+        (write-flush x out))
+      (define/public (remove-subchannel id)
+        (set! subchannels (filter-map 
+                            (lambda (x) (and (not (= (car x) id)) x)) 
+                            subchannels)))
+      (define/public (addresses) (tcp-addresses in #t))
+      (define/public (get-forward-event forwarder)
+        (when (equal? out #f) (ensure-connected))
+        (wrap-evt in (lambda (e) 
+                       ;(printf "VECTOR SOCKET MESSAGE ~a\n" e)
+                       (forwarder (read in) this))))
+
+      (define/public (read-message)
+        (when (equal? out #f) (ensure-connected))
+        (read in))
       (define/public (register nes)
-        (cons 
-          (wrap-evt in (lambda (e) 
-            (printf "SOCKET-CONNECTION SOCKET MESSAGE ~a\n" e)
-            (forward-mesg (read in))))
-          nes))
+        (error)
+        (cons (wrap-evt in void) nes))
+
+      (when (and host port background-connect)
+        (set! connecting #t)
+        (set! ch (make-channel))
+        ;(printf "Delay connecting to ~a ~a\n" host port)
+        (thread 
+          (lambda ()
+            (channel-put 
+              ch 
+              (call-with-values 
+                (lambda () (with-handlers ([exn:fail? (lambda (e) 
+                                                        (printf "OPPS ~a\n" e)
+                                                        (values 'bozo #f))])
+                             (tcp-connect/retry host port #:times retry-times #:delay delay)))
+                list)))))
+      (when (and host port (not background-connect))
+        (tcp-connect/retry host port #:times retry-times #:delay delay))
       (super-new)
   )))
 
@@ -575,7 +624,7 @@
       (init-field host-name)
       (init-field listen-port)
       (init-field [cmdline-list #f])
-      (init-field [sc #f]) ;socket-channel
+      (init-field [sc #f]) ;socket-connection
       (init-field [restart-on-exit #f])
       (field [sp #f]) ;spawned-process
       (field [id 0])
@@ -589,17 +638,16 @@
         (set! remote-places (append remote-places(list rp))))
       (define (spawn-node)
         (set! sp (new spawned-process% [cmdline-list cmdline-list] [parent this])))
-      (define (setup-socket-channel)
-        (define-values (in out) (tcp-connect/retry host-name listen-port))
-        (set! sc (socket-channel in out null)))
+      (define (setup-socket-connection)
+        (set! sc (new socket-connection% [host host-name] [port listen-port])))
       (define (restart-node)
         (spawn-node)
-        (setup-socket-channel))
+        (setup-socket-connection))
 
       (when (and cmdline-list (not sc))
         (spawn-node))
       (unless sc
-        (setup-socket-channel))
+        (setup-socket-connection))
 
       (define (find-place-by-sc-id scid)
         (for/fold ([r #f]) ([rp remote-places])
@@ -607,8 +655,7 @@
             rp
             r)))
 
-      (define (on-socket-event e)
-        (define it (read e))
+      (define (on-socket-event it in-port)
         (match it
           [(dcgm 7 #;(== DCGM-DPLACE-DIED) -1 -1 ch-id)
             (printf "SPAWNED-PROCESS:~a PLACE DIED ~a:~a:~a\n" (send sp get-pid) host-name listen-port ch-id)
@@ -617,7 +664,7 @@
                                                 (send rp place-died))]
               [else (printf "remote-place for sc-id ~a not found\n" ch-id)])]
           [(dcgm 4 #;(== DCGM-TYPE-INTER-DCHANNEL) _ ch-id msg)                                               
-            (define pch (socket-channel-lookup-subchannel sc ch-id))                                  
+            (define pch (sconn-lookup-subchannel sc ch-id))                                  
             (cond 
               [(place-channel? pch)
                 ;(printf "SOCKET to PLACE CHANNEL ~a\n" msg)                                                        
@@ -625,7 +672,7 @@
               [(is-a? pch connection%)
                (send pch forward msg)])]
           [(? eof-object?)
-           (define-values (lh lp rh rp) (tcp-addresses (socket-channel-in sc) #t))
+           (define-values (lh lp rh rp) (send sc addresses))
            (printf "EOF on vm socket connection pid to ~a ~a:~a CONNECTION ~a:~a -> ~a:~a\n" (send sp get-pid) host-name listen-port lh lp rh rp)
            (set! sc #f)]
 
@@ -655,7 +702,7 @@
         (send (car remote-places) get-channel))
 
       (define/public (drop-sc-id scid)
-        (socket-channel-remove-subchannel sc scid))
+        (sconn-remove-subchannel sc scid))
                      
       (define/public (launch-place place-exec #:restart-on-exit [restart-on-exit #f] #:one-sided-place [one-sided-place #f])
         (define rp (new remote-place% [vm this] [place-exec place-exec] [restart-on-exit restart-on-exit]
@@ -670,18 +717,18 @@
 
       (define/public (spawn-remote-place place-exec dch)
         (define ch-id (nextid))
-        (socket-channel-add-subchannel sc ch-id dch)
-        (socket-channel-write-flush sc (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 place-exec ch-id))
+        (sconn-add-subchannel sc ch-id dch)
+        (sconn-write-flush sc (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 place-exec ch-id))
         (new place-socket-bridge% [pch dch] [sch sc] [id ch-id]))
 
       (define/public (spawn-remote-connection name dch)
         (define ch-id (nextid))
-        (socket-channel-add-subchannel sc ch-id dch)
-        (socket-channel-write-flush sc (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 (list 'connect name) ch-id))
+        (sconn-add-subchannel sc ch-id dch)
+        (sconn-write-flush sc (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 (list 'connect name) ch-id))
         (new place-socket-bridge% [pch dch] [sch sc] [id ch-id]))
 
       (define/public (send-exit)
-        (socket-channel-write-flush sc (dcgm DCGM-TYPE-DIE -1 -1 "DIE")))
+        (sconn-write-flush sc (dcgm DCGM-TYPE-DIE -1 -1 "DIE")))
 
       (define/public (wait-for-die)
         (send sp wait-for-die))
@@ -690,7 +737,7 @@
         (let* ([es (if sp (send sp register es) es)]
                [es (for/fold ([nes es]) ([rp remote-places])
                              (send rp register nes))]
-               [es (if sc (cons (wrap-evt (socket-channel-in sc) on-socket-event) es) es)]
+               [es (if sc (cons (sconn-get-forward-event sc on-socket-event) es) es)]
                [es (if (and restart-on-exit
                             (not (equal? restart-on-exit #t)))
                        (send restart-on-exit register es)
@@ -843,8 +890,8 @@
       (define (default-on-place-dead e)
         (set! pd #f)
         (set! psb #f)
-        (socket-channel-write-flush sc (dcgm DCGM-DPLACE-DIED -1 -1 ch-id))
-        (socket-channel-remove-subchannel sc ch-id))
+        (sconn-write-flush sc (dcgm DCGM-DPLACE-DIED -1 -1 ch-id))
+        (sconn-remove-subchannel sc ch-id))
 
       (init-field [on-place-dead default-on-place-dead])
 
@@ -861,7 +908,7 @@
           [(list 'place place-path place-func)
             ((dynamic-require (->path place-path) place-func))]))
 
-      (socket-channel-add-subchannel sc ch-id pd)
+      (sconn-add-subchannel sc ch-id pd)
       (set! psb (new place-socket-bridge% [pch pd] [sch sc] [id ch-id]))
 
       (define/public (get-channel) pd)
@@ -894,14 +941,14 @@
 
       (init-field [on-place-dead #f])
 
-      (socket-channel-add-subchannel sc ch-id this)
+      (sconn-add-subchannel sc ch-id this)
       (set! psb (new place-socket-bridge% [pch pch1] [sch sc] [id ch-id]))
 
       (define/public (forward msg)
         (place-channel-put name-ch (list msg pch2)))
 
       (define/public (put msg)
-        (socket-channel-write-flush sc (dcgm DCGM-TYPE-INTER-DCHANNEL ch-id ch-id msg)))
+        (sconn-write-flush sc (dcgm DCGM-TYPE-INTER-DCHANNEL ch-id ch-id msg)))
       (define/public (register es) (send psb register es))
 
       (super-new)
@@ -1013,11 +1060,10 @@
     (define (loopit my-id)
       (values my-id (+ next-node-id rcnt)))
     (define (remote-spawn)
-      (define-values (in out) (tcp-connect/backoff rname rport))
+      (define sp (new socket-connection% [host rname] [port rport]))
       (define msg (list my-id node-name node-cnt curr-conf-idx next-node-id rname rcnt conf))
       ;(printf "Sending ~v\n" msg)
-      (write-flush msg out)
-      (define sp (socket-channel in out null))
+      (sconn-write-flush sp msg)
       (for ([i (in-range rcnt)])
         (vector-set! cv (+ next-node-id i) sp))
       (loopit my-id))
@@ -1034,7 +1080,7 @@
      [(not my-id) (loopit my-id)])))
        
 
-;; Contract: listen/init-channels : port -> VectorOf[ socket-channel]
+;; Contract: listen/init-channels : port -> VectorOf[ socket-connection%]
 ;;
 ;; Purpose: build up channel-vector by listening for connect requests for nodes less than
 ;; myid. Spawn thread to build channel-vector by connecting to nodes greater than myid.
@@ -1051,7 +1097,7 @@
              [thr #f]
              [cv #f])
     (define-values (in out) (tcp-accept listener))
-    (define sp (socket-channel in out null))
+    (define sp (new socket-connection% [in in] [out out]))
     (match-define (list sid sname scnt myidx myid myname mycnt conf) (read in))
     ;(printf "Listen ~a\n" (list sid sname scnt myidx myid myname mycnt conf))
     (let*
