@@ -545,7 +545,7 @@
     (class* object% (event-container<%>)
       (init-field [host #f]
                   [port #f]
-                  [retry-times 20]
+                  [retry-times 30]
                   [delay 1]
                   [background-connect #t]
                   [in #f]
@@ -560,7 +560,7 @@
         (let loop ([t 0])
           (with-handlers ([exn? (lambda (e) 
                         (cond [(t . < . times) 
-                               (printf "waiting ~a sec to retry connection to ~a:~a\n" delay rname rport)
+                               (printf "try ~a waiting ~a sec to retry connection to ~a:~a\n" t delay rname rport)
                                (sleep delay) 
                                (loop (add1 t))]
                               [else (raise e)]))])
@@ -572,7 +572,8 @@
           (match (channel-get ch)
             [(list _in _out)
              (set! in _in)
-             (set! out _out)])))
+             (set! out _out)
+             (set! connecting #f)])))
 
       (define/public (add-subchannel id pch)
         (set! subchannels (append subchannels (list (cons id pch)))))
