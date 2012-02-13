@@ -33,7 +33,7 @@ request messages to the node's message router.
 @include-section["example_named.scrbl"]
 
 @section{Internal Design}
-Racloud commands that spawn remote nodes and places return controller
+Racloud commands, which spawn remote nodes and places, return controller
 objects that allow commands and messages to be communicated to the
 remote controlled objects.  In @Figure-ref["interfaces"], when node A
 spawns a new node B, A is given a @racket[remote-node%] object with

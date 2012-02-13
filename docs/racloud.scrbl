@@ -185,11 +185,11 @@ a @racket[(send parent process-died this)] call.
   (defmethod (get-sc-id) exact-positive-integer?) ]{
 
 @defconstructor[([pch place-channel?]
-                 [sch socket-channel?]
+                 [sch socket-connection%?]
                  [id exact-positive-integer?]
                  )]{
 The @racket[pch] argument is a @racket[place-channel].  Messages received on @racket[pch] are forwarded to the 
-socket-channel @racket[sch] via a @racket[dcgm] message. e.g. @racket[(socket-channel-write-flush sch (dcgm DCGM-TYPE-INTER-DCHANNEL id id msg))] The @racket[id] is a @racket[exact-positive-integer] that identifies the socket-channel subchannel for this inter-node place connection.
+socket-connection% @racket[sch] via a @racket[dcgm] message. e.g. @racket[(sconn-write-flush sch (dcgm DCGM-TYPE-INTER-DCHANNEL id id msg))] The @racket[id] is a @racket[exact-positive-integer] that identifies the socket-connection subchannel for this inter-node place connection.
 }
 }
 
@@ -300,7 +300,7 @@ The @racket[place%] instance represents a place launched on a racloud node at th
 @defconstructor[([vm remote-place%?]
                  [place-exec list?]
                  [ch-id exact-positive-integer?]
-                 [sc socket-channel?]
+                 [sc socket-connection%?]
                  [on-place-dead (-> event void?) default-on-place-dead])]{
  Constructs a @racket[remote-place%] instance.
  @|place-exec-note|
@@ -321,7 +321,7 @@ The @racket[connection%] instance represents a connection to a named-place insta
 @defconstructor[([vm remote-node%?]
                  [name string?]
                  [ch-id exact-positive-integer?]
-                 [sc socket-channel?])]{
+                 [sc socket-connection%?])]{
  Constructs a @racket[remote-place%] instance.
  @|place-exec-note|
  The @racket[ch-id] and @racket[sc] arguments are internally used to establish routing between the remote node and this named-place.

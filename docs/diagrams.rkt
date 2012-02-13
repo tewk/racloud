@@ -65,7 +65,7 @@
               (t/2 (format "remote-node% - ~a" name))
               (surround/box
                (t/3 "spawned-process%"))
-              (t/3 "socket-channel")
+              (t/3 "socket-connection%")
               (surround/box
                (vc-append 3
                           (t/3 "remote-places")
@@ -82,7 +82,7 @@
   (surround/box
    (vc-append
     (t (format "node% - ~a" name))
-    (t/3 "socket-channel")
+    (t/3 "socket-connection%")
     (surround/box
      (vc-append 
       (t/2 "superivised places")
@@ -127,7 +127,7 @@
 
 (define cc
   (list
-   (list "controller" "controlled")
+   (list "A - controller" "B - controlled")
    (list "remote-node%" "node%")
    (list "remote-place%" "place%")
    (list "remote-connection%" "connection%")))
