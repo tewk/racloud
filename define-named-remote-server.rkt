@@ -7,8 +7,6 @@
          (for-syntax racket/pretty)
          "racloud.rkt")
 
-(provide define-named-remote-server)
-
 (define-syntax define/provide
   (syntax-rules ()
     [(_ (name x ...) body ...)
@@ -34,16 +32,34 @@
       (define pch (send dest get-channel))
       (place-channel-put pch msg)]))
 
-(define-syntax (define-named-remote-server stx)
+(define-syntax (define-define-remote-server stx)
   (syntax-case stx ()
-    [(_ name forms ...)
+    [(_ form-name)
+      #;(printf "FORM_NAME ~a ~a ~a\n" #'form-name (syntax->datum #'form-name)
+              (equal? (syntax->datum #'form-name) 'define-named-remote-server))
+      (with-syntax ([receive-line
+                      (cond
+                        [(eq? (syntax->datum #'form-name) 'define-named-remote-server)
+                          #'(list (list fname-symbol args (... ...)) src)]
+                        [else
+                          #'(list fname-symbol args (... ...))])]
+                    [send-dest 
+                      (cond
+                        [(eq? (syntax->datum #'form-name) 'define-named-remote-server)
+                          #'src]
+                        [else
+                          #'ch])])
+(define x
+#'(define-syntax (form-name stx)
+  (syntax-case stx ()
+    [(_ name forms (... ...))
      (let ()
       (define (rpc-stc? stx)
         (equal? (syntax-e (stx-car stx)) 'define-rpc))
 
       (define-values (states rpcs)
         (for/fold ([states null]
-                   [rpcs   null]) ([f (syntax->list #'(forms ...))])
+                   [rpcs   null]) ([f (syntax->list #'(forms (... ...)))])
           (cond
             [(rpc-stc? f)
              (values states (append rpcs (list f)))]
@@ -59,39 +75,39 @@
       (define trans-rpcs 
         (for/list ([f rpcs])
           (syntax-case f ()
-            [(_ (fname args ...) body ...)
+            [(_ (fname args (... ...)) body (... ...))
              (with-syntax ([fname-symbol (string->id stx (format "~a-~a" (id->string  #'name) (id->string #'fname)))])
 
-               #'(define/provide (fname-symbol dest args ...)
-                     (named-place-channel-put dest (list (quote fname) args ...))
+               #'(define/provide (fname-symbol dest args (... ...))
+                     (named-place-channel-put dest (list (quote fname) args (... ...)))
                      (named-place-channel-get dest)))])))
 
       (define trans-place
-        (with-syntax ([(states2 ...)
+        (with-syntax ([(states2 (... ...))
                         (for/list ([s states])
                           (syntax-case s ()
-                            [(_ rest ...)
-                             #'(define rest ...)]))]
-                      [(cases ...)
+                            [(_ rest (... ...))
+                             #'(define rest (... ...))]))]
+                      [(cases (... ...))
                         (for/list ([r rpcs])
                           (syntax-case r ()
-                            [(_ (fname args ...) body ...)
+                            [(_ (fname args (... ...)) body (... ...))
                              (let ()
                              (with-syntax ([fname-symbol #'(quote fname)])
-                               #'[(list (list fname-symbol args ...) src)
+                               #'[receive-line
                                    (define result 
                                      (let ()
-                                       body ...))
-                                   (place-channel-put src result)
+                                       body (... ...)))
+                                   (place-channel-put send-dest result)
                                    (loop)]))]))])
         #`(place ch
             (let ()
-              states2 ...
+              states2 (... ...)
               (let loop ()
                 (define msg (place-channel-get ch))
                 (define resp
                   (match msg
-                    cases ...
+                    cases (... ...)
                   ))
                 (place-channel-put ch resp)
                 loop)
@@ -106,3 +122,13 @@
           (void)))
       ;(pretty-print (syntax->datum x))
       x))]))
+)
+;(pretty-print (syntax->datum x))
+x)]))
+
+(define-define-remote-server define-remote-server)
+(define-define-remote-server define-named-remote-server)
+(provide define-remote-server)
+(provide define-named-remote-server)
+
+

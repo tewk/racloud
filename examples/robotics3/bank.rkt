@@ -1,6 +1,6 @@
 #lang racket/base
 (require racket/match 
-         "../../define-remote-server.rkt")
+         "../../define-named-remote-server.rkt")
 
 (define-remote-server                                                                                         
   bank                                                                                                        
