@@ -4,6 +4,7 @@
          racket/place
          racket/match
          racket/class
+         racket/stxparam
          (for-syntax racket/pretty)
          "racloud.rkt")
 
@@ -31,6 +32,12 @@
     [else
       (define pch (send dest get-channel))
       (place-channel-put pch msg)]))
+
+
+(define-syntax-rule (define-syntax-parameter-error x)                                                       
+  (define-syntax-parameter x (lambda (stx) (raise-syntax-error 'x "only allowed inside define-*-remote-server definition" stx))))          
+                                                                                                              
+(define-syntax-parameter-error log-to-parent)
 
 (define-syntax (define-define-remote-server stx)
   (syntax-case stx ()
@@ -105,11 +112,12 @@
               states2 (... ...)
               (let loop ()
                 (define msg (place-channel-get ch))
-                (define resp
-                  (match msg
-                    cases (... ...)
-                  ))
-                (place-channel-put ch resp)
+                (define (log-to-parent-real msg #:severity [severity 'info])
+                  (place-channel-put ch (log-message severity msg)))
+                (syntax-parameterize ([log-to-parent (make-rename-transformer #'log-to-parent-real)])
+                    (match msg
+                      cases (... ...)
+                    ))
                 loop)
                 ))))
     (with-syntax ([mkname (string->id stx (format "make-~a" (id->string #'name)))])
@@ -130,5 +138,6 @@ x)]))
 (define-define-remote-server define-named-remote-server)
 (provide define-remote-server)
 (provide define-named-remote-server)
+(provide log-to-parent)
 
 

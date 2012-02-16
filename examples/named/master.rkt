@@ -11,9 +11,9 @@
 (provide main)
 
 (define (main)
-  (define remote-vm (spawn-remote-racket-vm "localhost" #:listen-port 6344))
+  (define remote-vm   (spawn-remote-racket-vm "localhost" #:listen-port 6344))
   (define tuple-place (supervise-named-place-thunk-at remote-vm 'tuple-server tuple-path 'make-tuple-server))
-  (define bank-place (remote-place remote-vm bank-path 'make-bank))
+  (define bank-place  (remote-place remote-vm bank-path 'make-bank))
 
   (master-event-loop
     remote-vm

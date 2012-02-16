@@ -6,7 +6,8 @@
          racket/class
          racket/trait
          racket/udp
-         racket/runtime-path)
+         racket/runtime-path
+         racket/date)
 
 (provide ssh-bin-path
          racket-path
@@ -36,6 +37,7 @@
          ll-channel-get
          ll-channel-put
          write-flush
+         log-message
 
          ;;
          start-spawned-node-router
@@ -175,6 +177,8 @@
 (define DCGM-TYPE-KILL-DPLACE          5)
 (define DCGM-TYPE-SPAWN-REMOTE-PROCESS 6)
 (define DCGM-DPLACE-DIED               7)
+(define DCGM-TYPE-LOG-TO-PARENT        8)
+(define DCGM-TYPE-NEW-PLACE            9)
 
 
 (define (dchannel-put ch msg)
@@ -320,14 +324,19 @@
       object% (event-container<%>)
       (init-field pch 
                   sch
-                  id)
+                  id
+                  node)
       (define/public (register nes)
         (cons 
           (wrap-evt 
             (if (dchannel? pch) (dchannel-ch pch) pch) 
             (lambda (e)
-              ;(printf "PLACE CHANNEL TO SOCKET ~a\n" e)
-              (put-msg e)))
+        ;      (printf "MSG ~v\n" e)
+        ;      (flush-output)
+              (match e
+                [(dcgm 8 #;(== DCGM-TYPE-LOG-TO-PARENT) _ _ (list severity msg))
+                  (send node log-from-child #:severity severity msg)]
+                [else (put-msg e)])))
           nes))
       (define/public (get-sc-id) id)
       (define/public (get-msg)
@@ -370,7 +379,7 @@
       (define (named-place-lookup name)
         (hash-ref named-places (->string name) #f))
       (define (add-place-channel-socket-bridge pch sch id)
-        (add-psb (new place-socket-bridge% [pch pch] [sch sch] [id id])))
+        (add-psb (new place-socket-bridge% [pch pch] [sch sch] [id id] [node this])))
       (define (forward-mesg m src-channel)
         (match m
           [(dcgm 1 #;(== DCGM-TYPE-DIE) src dest "DIE") (exit 1)]
@@ -384,7 +393,7 @@
                (sconn-write-flush d (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL src dest ch-id))]
               [(or (place-channel? d) (place? d))
                (place-channel-put d m)])]
-          [(dcgm 3 #;(== DCGM-TYPE-NEW-INTER-DCHANNEL) -1 (and place-exec (list-rest type rest)) ch-id)
+          [(dcgm 9 #;(== DCGM-TYPE-NEW-PLACE) -1 (and place-exec (list-rest type rest)) ch-id)
            (match place-exec
              [(list 'connect name) 
               (define np (named-place-lookup name))
@@ -393,7 +402,8 @@
                   (define nc (new connection%
                                  [name-pl np]
                                  [ch-id ch-id]
-                                 [sc src-channel]))
+                                 [sc src-channel]
+                                 [node this]))
                   (add-sub-ec nc)]
                  
                 [else
@@ -404,7 +414,8 @@
               (define np (new place%
                              [place-exec place-exec]
                              [ch-id ch-id]
-                             [sc src-channel]))
+                             [sc src-channel]
+                             [node this]))
               (match place-exec
                 [(list _ _ _ name) (add-named-place name np)]
                 [else (add-sub-ec np)])])]
@@ -464,6 +475,10 @@
               (void)]))]))
 
 
+      (define/public (log-from-child msg #:severity [severity 'info])
+        (printf "~a ~a ~a\n" (date->string (current-date) #t) severity msg)
+        (flush-output))
+
       (define/public (register nes)
         (let*
           ([nes
@@ -518,7 +533,13 @@
               (for/fold ([n nes]) ([x spawned-vms])
                 (send x register n))
               nes)]
-           [nes (register-beacon nes)])
+           [nes (register-beacon nes)]
+           [nes
+            (cond
+              [named-places
+              (for/fold ([n nes]) ([x (in-hash-values named-places)])
+                (send x register n))]
+              [else nes])])
           nes))
 
       (define/public (sync-events)
@@ -719,14 +740,14 @@
       (define/public (spawn-remote-place place-exec dch)
         (define ch-id (nextid))
         (sconn-add-subchannel sc ch-id dch)
-        (sconn-write-flush sc (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 place-exec ch-id))
-        (new place-socket-bridge% [pch dch] [sch sc] [id ch-id]))
+        (sconn-write-flush sc (dcgm DCGM-TYPE-NEW-PLACE -1 place-exec ch-id))
+        (new place-socket-bridge% [pch dch] [sch sc] [id ch-id] [node this]))
 
       (define/public (spawn-remote-connection name dch)
         (define ch-id (nextid))
         (sconn-add-subchannel sc ch-id dch)
-        (sconn-write-flush sc (dcgm DCGM-TYPE-NEW-INTER-DCHANNEL -1 (list 'connect name) ch-id))
-        (new place-socket-bridge% [pch dch] [sch sc] [id ch-id]))
+        (sconn-write-flush sc (dcgm DCGM-TYPE-NEW-PLACE -1 (list 'connect name) ch-id))
+        (new place-socket-bridge% [pch dch] [sch sc] [id ch-id] [node this]))
 
       (define/public (send-exit)
         (sconn-write-flush sc (dcgm DCGM-TYPE-DIE -1 -1 "DIE")))
@@ -882,9 +903,10 @@
   (backlink
     (class* 
       object% (event-container<%>)
-      (init-field place-exec)
-      (init-field ch-id)
-      (init-field sc)
+      (init-field place-exec
+                  ch-id
+                  sc
+                  node)
       (field [pd #f])
       (field [psb #f])
       (field [running #f])
@@ -910,8 +932,7 @@
             ((dynamic-require (->path place-path) place-func))]))
 
       (sconn-add-subchannel sc ch-id pd)
-      (set! psb (new place-socket-bridge% [pch pd] [sch sc] [id ch-id]))
-
+      (set! psb (new place-socket-bridge% [pch pd] [sch sc] [id ch-id] [node node]))
       (define/public (get-channel) pd)
       (define/public (stop)
         (cond
@@ -931,9 +952,10 @@
   (backlink
     (class* 
       object% (event-container<%>)
-      (init-field name-pl)
-      (init-field ch-id)
-      (init-field sc)
+      (init-field name-pl
+                  ch-id
+                  sc
+                  node)
       (field [psb #f])
 
       (define-values (pch1 pch2) (place-channel))
@@ -943,7 +965,7 @@
       (init-field [on-place-dead #f])
 
       (sconn-add-subchannel sc ch-id this)
-      (set! psb (new place-socket-bridge% [pch pch1] [sch sc] [id ch-id]))
+      (set! psb (new place-socket-bridge% [pch pch1] [sch sc] [id ch-id] [node node]))
 
       (define/public (forward msg)
         (place-channel-put name-ch (list msg pch2)))
@@ -1208,6 +1230,9 @@
 
 (define (restart-every seconds #:retry [retry #f] #:on-fail-email [fail-email-address #f])
   (new restarter% [seconds seconds] [retry retry]))
+
+(define (log-message severity msg)
+  (dcgm DCGM-TYPE-LOG-TO-PARENT -1 -1 (list severity msg)))
 
 
 
