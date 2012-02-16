@@ -159,6 +159,11 @@
                         [else (raise e)]))])
       (tcp-connect rname (->number rport)))))
 
+(define (print-log-message severity msg)
+  (printf "~a ~a ~a\n" (date->string (current-date) #t) severity msg)
+  (flush-output))
+
+
 ;node configuration
 (struct node-config (node-name node-port proc-count ssh-path racket-path racloud-path mod-path func-name conf-path conf-name) #:prefab)
 ;distributed communication group
@@ -179,6 +184,7 @@
 (define DCGM-DPLACE-DIED               7)
 (define DCGM-TYPE-LOG-TO-PARENT        8)
 (define DCGM-TYPE-NEW-PLACE            9)
+(define DCGM-TYPE-SET-OWNER           10)
 
 
 (define (dchannel-put ch msg)
@@ -248,6 +254,7 @@
       (field [router #f])
       (define/public (remove-from-router)
         (and router (send router remove-ec this)))
+      (define/public (get-router) router)
       (define/public (backlink _router)
         (set! router _router))
       )))
@@ -362,6 +369,7 @@
       (init-field [spawned-vms null])
       (init-field [named-places (make-hash)])
       (init-field [beacon #f])
+      (init-field [owner #f])
       (field [id 0])
       (define/public (nextid)
         (set! id (add1 id))
@@ -449,6 +457,11 @@
                     )]
           [(dcgm 7 #;(== DCGM-DPLACE-DIED) -1 -1 ch-id)
             (printf "PLACE ~a died\n" ch-id)]
+          [(dcgm 8 #;(== DCGM-TYPE-LOG-TO-PARENT) _ _ (list severity msg))
+            (log-from-child #:severity severity msg)]
+          [(dcgm 10 #;(== DCGM-TYPE-SET-OWNER) -1 -1 msg)
+            (printf "RECV DCGM-TYPE-SET-OWNER ~a\n" src-channel)
+            (set! owner src-channel)]
           [(dcgm mtype srcs dest msg)
             (define d (vector-ref chan-vec dest))
             (cond
@@ -476,8 +489,12 @@
 
 
       (define/public (log-from-child msg #:severity [severity 'info])
-        (printf "~a ~a ~a\n" (date->string (current-date) #t) severity msg)
-        (flush-output))
+        ;(printf "Received Log Message ~a ~a\n" severity msg)
+        (cond
+          [owner 
+            ;(printf "Sent to owner\n")
+            (sconn-write-flush owner (log-message severity msg))]
+          [else (print-log-message severity msg)]))
 
       (define/public (register nes)
         (let*
@@ -661,7 +678,8 @@
       (define (spawn-node)
         (set! sp (new spawned-process% [cmdline-list cmdline-list] [parent this])))
       (define (setup-socket-connection)
-        (set! sc (new socket-connection% [host host-name] [port listen-port])))
+        (set! sc (new socket-connection% [host host-name] [port listen-port]))
+        (sconn-write-flush sc (dcgm DCGM-TYPE-SET-OWNER -1 -1 "")))
       (define (restart-node)
         (spawn-node)
         (setup-socket-connection))
@@ -693,6 +711,14 @@
                 (place-channel-put pch msg)] 
               [(is-a? pch connection%)
                (send pch forward msg)])]
+          [(dcgm 8 #;(== DCGM-TYPE-LOG-TO-PARENT) _ _ (list severity msg))
+            (define parent (send this get-router))
+            (cond 
+              [parent 
+                ;(printf "Sent to Parent ~a ~a \n" severity msg)
+                (send parent log-from-child #:severity severity msg)]
+              [else (print-log-message severity msg)])]
+
           [(? eof-object?)
            (define-values (lh lp rh rp) (send sc addresses))
            (printf "EOF on vm socket connection pid to ~a ~a:~a CONNECTION ~a:~a -> ~a:~a\n" (send sp get-pid) host-name listen-port lh lp rh rp)
@@ -1200,7 +1226,8 @@
   (define listener (tcp-listen listen-port 4 #t))
   (define nc (new node% [listen-port listener]))
   (for ([ec event-containers])
-    (send nc add-sub-ec ec))
+    (send nc add-sub-ec ec)
+    (send ec backlink nc))
   (send nc sync-events)) 
 
 
