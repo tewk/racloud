@@ -61,17 +61,20 @@
   (syntax-case stx ()
     [(_ name forms (... ...))
      (let ()
-      (define (rpc-stc? stx)
-        (equal? (syntax-e (stx-car stx)) 'define-rpc))
+
+      (define (is-id? id stx)
+        (equal? (syntax-e stx) id))
+      (define (define? stx) (is-id? 'define-state (stx-car stx)))
 
       (define-values (states rpcs)
         (for/fold ([states null]
                    [rpcs   null]) ([f (syntax->list #'(forms (... ...)))])
           (cond
-            [(rpc-stc? f)
-             (values states (append rpcs (list f)))]
+            [(define? f)
+             (values (append states (list f)) rpcs)]
             [else
-             (values (append states (list f)) rpcs)])))
+             (values states (append rpcs (list f)))]
+            )))
 
       (define (id->string x)
         (symbol->string (syntax->datum x)))
@@ -82,12 +85,17 @@
       (define trans-rpcs 
         (for/list ([f rpcs])
           (syntax-case f ()
-            [(_ (fname args (... ...)) body (... ...))
-             (with-syntax ([fname-symbol (string->id stx (format "~a-~a" (id->string  #'name) (id->string #'fname)))])
+            [(define-type (fname args (... ...)) body (... ...))
+             (with-syntax ([fname-symbol (string->id stx (format "~a-~a" (id->string  #'name) (id->string #'fname)))]
+                           [(receive (... ...))
+                             (cond 
+                               [(is-id? 'define-rpc #'define-type) #'((named-place-channel-get dest))]
+                               [(is-id? 'define-cast #'define-type) #'()]
+                               [else (raise "Bad define in define-remote-server")])])
 
                #'(define/provide (fname-symbol dest args (... ...))
                      (named-place-channel-put dest (list (quote fname) args (... ...)))
-                     (named-place-channel-get dest)))])))
+                     receive (... ...)))])))
 
       (define trans-place
         (with-syntax ([(states2 (... ...))
@@ -98,14 +106,19 @@
                       [(cases (... ...))
                         (for/list ([r rpcs])
                           (syntax-case r ()
-                            [(_ (fname args (... ...)) body (... ...))
+                            [(define-type (fname args (... ...)) body (... ...))
                              (let ()
-                             (with-syntax ([fname-symbol #'(quote fname)])
+                             (with-syntax ([fname-symbol #'(quote fname)]
+                                           [(send-line (... ...))
+                                             (cond 
+                                               [(is-id? 'define-rpc #'define-type) #'((place-channel-put send-dest result))]
+                                               [(is-id? 'define-cast #'define-type) #'()]
+                                               [else (raise "Bad define in define-remote-server")])])
                                #'[receive-line
                                    (define result 
                                      (let ()
                                        body (... ...)))
-                                   (place-channel-put send-dest result)
+                                   send-line (... ...)
                                    (loop)]))]))])
         #`(place ch
             (let ()
@@ -128,7 +141,7 @@
           #,@trans-rpcs
           (define/provide (mkname) #,trans-place)
           (void)))
-      ;(pretty-print (syntax->datum x))
+      (pretty-print (syntax->datum x))
       x))]))
 )
 ;(pretty-print (syntax->datum x))

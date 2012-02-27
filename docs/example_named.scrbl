@@ -83,18 +83,24 @@ with the @racket['set] symbol. The server executes the RPC call with
 the communicated arguments and sends the result back to the RPC
 client.
 
+The @racket[define-rpc] form is similar to the @racket[define-rpc] form
+except there is no reply message from the server to client
+
 @figure["define-named-remote-server-expansion" "Expansion of define-named-remote-server"]{
 @codeblock{
 '(begin
    (require racket/place racket/match)
    (define/provide
     (tuple-server-set dest k v)
-    (some-channel-put dest (list 'set k v))
-    (some-channel-get dest))
+    (named-place-channel-put dest (list 'set k v))
+    (named-place-channel-get dest))
    (define/provide
     (tuple-server-get dest k)
-    (some-channel-put dest (list 'get k))
-    (some-channel-get dest))
+    (named-place-channel-put dest (list 'get k))
+    (named-place-channel-get dest))
+   (define/provide
+    (tuple-server-hello dest)
+    (named-place-channel-put dest (list 'hello)))
    (define/provide
     (make-tuple-server)
     (place
@@ -103,20 +109,26 @@ client.
        (define h (make-hash))
        (let loop ()
          (define msg (place-channel-get ch))
-         (define resp                                                                                                                   
-           (match                                                                                                                       
-            msg                                                                                                                         
-            ((list (list 'set k v) src)                                                                                                 
-             (define result (let () (hash-set! h k v) v))                                                                               
-             (place-channel-put src result)                                                                                             
-             (loop))                                                                                                                    
-            ((list (list 'get k) src)                                                                                                   
-             (define result (let () (hash-ref h k #f)))                                                                                 
-             (place-channel-put src result)                                                                                             
-             (loop))))                                                                                                                  
-         (place-channel-put ch resp)                                                                                                    
+         (define (log-to-parent-real msg #:severity (severity 'info))
+           (place-channel-put ch (log-message severity msg)))
+         (syntax-parameterize
+          ((log-to-parent (make-rename-transformer #'log-to-parent-real)))
+          (match
+           msg
+           ((list (list 'set k v) src)
+            (define result (let () (hash-set! h k v) v))                                                                                
+            (place-channel-put src result)                                                                                              
+            (loop))                                                                                                                     
+           ((list (list 'get k) src)                                                                                                    
+            (define result (let () (hash-ref h k #f)))                                                                                  
+            (place-channel-put src result)                                                                                              
+            (loop))                                                                                                                     
+           ((list (list 'hello) src)                                                                                                    
+            (define result                                                                                                              
+              (let () (printf "Hello from define-cast\n") (flush-output)))                                                              
+            (loop))))                                                                                                                   
          loop))))                                                                                                                       
-   (void))
+   (void))   
 }
 }
 

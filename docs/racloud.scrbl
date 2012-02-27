@@ -10,8 +10,8 @@
 
 @(define evaler (make-base-eval))                                                                         
 @(interaction-eval #:eval evaler (require "../racloud.rkt" racket/class 
-                                          "../define-named-remote-server.rkt"
-                                          "../define-remote-server.rkt")) 
+                                          "../define-named-remote-server.rkt"))
+
 
 @title[#:tag "racloud"]{Racloud}
 

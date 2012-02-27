@@ -12,4 +12,4 @@ Run make to generate html and pdf documentation
 * docs/example_named.scrbl
   A Racloud distributed system example.
 * docs/overview.scrbl
-  An overview of the Racloud design folowed by detailed internal documentation
+  An overview of the Racloud design followed by detailed internal documentation

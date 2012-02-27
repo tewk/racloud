@@ -10,4 +10,6 @@
     (hash-set! h k v)
     v)
   (define-rpc (get k)
-    (hash-ref h k #f)))
+    (hash-ref h k #f))
+  (define-cast (hello)
+    (printf "Hello from define-cast\n")(flush-output)))

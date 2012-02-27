@@ -25,13 +25,16 @@
     (after-seconds 2
       (define c (connect-to-named-place remote-vm 'tuple-server))
       (define d (connect-to-named-place remote-vm 'tuple-server))
+      (tuple-server-hello c)
+      (tuple-server-hello d)
       (displayln (tuple-server-set c "Kevin" 100))
       (displayln (tuple-server-set d "Kyle" 200))
       (displayln (tuple-server-get c "Kevin"))
       (displayln (tuple-server-get d "Kyle"))
       (displayln (tuple-server-get d "Kevin"))
-      (displayln (tuple-server-get c "Kyle")))
-    (after-seconds 6
-      (vm-send-exit remote-vm))
+      (displayln (tuple-server-get c "Kyle"))
+      )
     (after-seconds 8
+      (vm-send-exit remote-vm))
+    (after-seconds 10
       (exit 0))))
